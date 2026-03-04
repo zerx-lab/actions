@@ -15,15 +15,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: 检查最新版本
-        id: version
+      - name: 检查上游最新版本
+        id: upstream
         run: |
-          # 通过重定向 Location 头获取版本号
           LOCATION=$(curl -sI "https://dida365.com/static/getApp/download?type=linux_deb_x64" \
             | grep -i "^location:" | tr -d '\r' | awk '{print $2}')
           echo "redirect: $LOCATION"
 
-          # 从文件名中提取版本号，例如 dida-8.0.0-amd64.deb -> 8.0.0
           VERSION=$(echo "$LOCATION" | grep -oP '(?<=dida-)\d+\.\d+\.\d+(?=-amd64\.deb)')
           if [ -z "$VERSION" ]; then
             echo "::error::无法提取版本号，Location: $LOCATION"
@@ -31,26 +29,30 @@ jobs:
           fi
 
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "当前最新版本: $VERSION"
+          echo "上游最新版本: $VERSION"
 
-      - name: 检查 Release 是否已存在
-        id: check_release
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: 对比 AUR 当前版本
+        id: check
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "Release v$VERSION 已存在，跳过"
+          UPSTREAM="${{ steps.upstream.outputs.version }}"
+          AUR_VERSION=$(curl -s "https://aur.archlinux.org/rpc/v5/info?arg[]=zerx-lab-dida-bin" \
+            | jq -r '.results[0].Version' | cut -d'-' -f1)
+
+          echo "上游版本: $UPSTREAM"
+          echo "AUR 版本:  $AUR_VERSION"
+
+          if [ "$UPSTREAM" = "$AUR_VERSION" ]; then
+            echo "needs_update=false" >> "$GITHUB_OUTPUT"
+            echo "AUR 已是最新，跳过"
           else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-            echo "发现新版本 v$VERSION，准备打包"
+            echo "needs_update=true" >> "$GITHUB_OUTPUT"
+            echo "发现新版本，准备更新 AUR: $AUR_VERSION -> $UPSTREAM"
           fi
 
       - name: 下载所有 Linux 包
-        if: steps.check_release.outputs.exists == 'false'
+        if: steps.check.outputs.needs_update == 'true'
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
+          VERSION="${{ steps.upstream.outputs.version }}"
           mkdir -p dist
 
           declare -A TYPES=(
@@ -71,38 +73,39 @@ jobs:
           done
 
       - name: 生成 SHA256 校验文件
-        if: steps.check_release.outputs.exists == 'false'
+        if: steps.check.outputs.needs_update == 'true'
         run: |
           cd dist
           sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
-      - name: 创建 GitHub Release
-        if: steps.check_release.outputs.exists == 'false'
+      - name: 创建 GitHub Release（若不存在）
+        if: steps.check.outputs.needs_update == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          export VERSION
-          export SHA256SUMS="$(cat dist/SHA256SUMS.txt)"
-          envsubst < dida/release-notes.tpl.md > /tmp/release-notes.md
+          VERSION="${{ steps.upstream.outputs.version }}"
+          if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "Release v$VERSION 已存在，跳过创建"
+          else
+            export VERSION
+            export SHA256SUMS="$(cat dist/SHA256SUMS.txt)"
+            envsubst < dida/release-notes.tpl.md > /tmp/release-notes.md
 
-          gh release create "v$VERSION" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "滴答清单 Linux v$VERSION" \
-            --notes-file /tmp/release-notes.md \
-            dist/*
+            gh release create "v$VERSION" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "滴答清单 Linux v$VERSION" \
+              --notes-file /tmp/release-notes.md \
+              dist/*
+          fi
 
       - name: 更新 AUR PKGBUILD
-        if: steps.check_release.outputs.exists == 'false'
+        if: steps.check.outputs.needs_update == 'true'
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-
-          # 获取 x86_64 deb 的 SHA256
+          VERSION="${{ steps.upstream.outputs.version }}"
           SHA256=$(sha256sum "dist/dida-${VERSION}-amd64.deb" | awk '{print $1}')
           echo "SHA256: $SHA256"
 
-          # 更新 PKGBUILD 中的版本号和 sha256sum
           sed -i "s/^pkgver=.*/pkgver=${VERSION}/" dida/aur/PKGBUILD
           sed -i "s/^sha256sums_x86_64=.*/sha256sums_x86_64=('${SHA256}')/" dida/aur/PKGBUILD
 
@@ -110,7 +113,7 @@ jobs:
           cat dida/aur/PKGBUILD
 
       - name: 发布到 AUR
-        if: steps.check_release.outputs.exists == 'false'
+        if: steps.check.outputs.needs_update == 'true'
         uses: KSXGitHub/github-actions-deploy-aur@v3.0.1
         with:
           pkgname: zerx-lab-dida-bin
@@ -118,5 +121,5 @@ jobs:
           commit_username: github-actions[bot]
           commit_email: github-actions[bot]@users.noreply.github.com
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-          commit_message: "Update dida365-bin to ${{ steps.version.outputs.version }}"
+          commit_message: "Update zerx-lab-dida-bin to ${{ steps.upstream.outputs.version }}"
           force_push: "true"
