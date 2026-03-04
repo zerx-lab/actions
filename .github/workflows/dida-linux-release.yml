@@ -1,15 +1,12 @@
-name: 滴答清单 Linux 版本监控与打包
+name: 滴答清单 AUR 更新监控
 
 on:
   schedule:
     - cron: '0 */6 * * *'  # 每 6 小时检查一次
   workflow_dispatch:         # 支持手动触发
 
-permissions:
-  contents: write  # 允许创建 Release
-
 jobs:
-  check-and-release:
+  check-and-update:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -49,65 +46,24 @@ jobs:
             echo "发现新版本，准备更新 AUR: $AUR_VERSION -> $UPSTREAM"
           fi
 
-      - name: 下载所有 Linux 包
+      - name: 计算 deb 包 SHA256
+        id: sha256
         if: steps.check.outputs.needs_update == 'true'
         run: |
           VERSION="${{ steps.upstream.outputs.version }}"
-          mkdir -p dist
-
-          declare -A TYPES=(
-            ["linux_deb_x64"]="dida-${VERSION}-amd64.deb"
-            ["linux_deb_arm64"]="dida-${VERSION}-arm64.deb"
-            ["linux_rpm_x64"]="dida-${VERSION}-x86_64.rpm"
-            ["linux_rpm_arm64"]="dida-${VERSION}-aarch64.rpm"
-            ["linux_appimage_x64"]="dida-${VERSION}-x86_64.AppImage"
-            ["linux_appimage_arm64"]="dida-${VERSION}-arm64.AppImage"
-          )
-
-          for TYPE in "${!TYPES[@]}"; do
-            FILENAME="${TYPES[$TYPE]}"
-            echo "正在下载 $FILENAME ..."
-            curl -fL "https://dida365.com/static/getApp/download?type=$TYPE" \
-              -o "dist/$FILENAME"
-            ls -lh "dist/$FILENAME"
-          done
-
-      - name: 生成 SHA256 校验文件
-        if: steps.check.outputs.needs_update == 'true'
-        run: |
-          cd dist
-          sha256sum * > SHA256SUMS.txt
-          cat SHA256SUMS.txt
-
-      - name: 创建 GitHub Release（若不存在）
-        if: steps.check.outputs.needs_update == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          VERSION="${{ steps.upstream.outputs.version }}"
-          if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            echo "Release v$VERSION 已存在，跳过创建"
-          else
-            export VERSION
-            export SHA256SUMS="$(cat dist/SHA256SUMS.txt)"
-            envsubst < dida/release-notes.tpl.md > /tmp/release-notes.md
-
-            gh release create "v$VERSION" \
-              --repo "$GITHUB_REPOSITORY" \
-              --title "滴答清单 Linux v$VERSION" \
-              --notes-file /tmp/release-notes.md \
-              dist/*
-          fi
+          curl -fL "https://dida365.com/static/getApp/download?type=linux_deb_x64" \
+            -o "dida-${VERSION}-amd64.deb"
+          SHA256=$(sha256sum "dida-${VERSION}-amd64.deb" | awk '{print $1}')
+          echo "SHA256: $SHA256"
+          echo "value=$SHA256" >> "$GITHUB_OUTPUT"
 
       - name: 更新 AUR PKGBUILD
         if: steps.check.outputs.needs_update == 'true'
         run: |
           VERSION="${{ steps.upstream.outputs.version }}"
-          SHA256=$(sha256sum "dist/dida-${VERSION}-amd64.deb" | awk '{print $1}')
-          echo "SHA256: $SHA256"
-
           sed -i "s/^pkgver=.*/pkgver=${VERSION}/" dida/aur/PKGBUILD
-          sed -i "s/^sha256sums_x86_64=.*/sha256sums_x86_64=('${SHA256}')/" dida/aur/PKGBUILD
+          sed -i "s/^pkgrel=.*/pkgrel=1/" dida/aur/PKGBUILD
+          sed -i "s/^sha256sums_x86_64=.*/sha256sums_x86_64=('${{ steps.sha256.outputs.value }}')/" dida/aur/PKGBUILD
 
           echo "更新后的 PKGBUILD："
           cat dida/aur/PKGBUILD
