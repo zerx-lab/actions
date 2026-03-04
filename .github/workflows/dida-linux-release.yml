@@ -1,0 +1,106 @@
+name: 滴答清单 Linux 版本监控与打包
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # 每 6 小时检查一次
+  workflow_dispatch:         # 支持手动触发
+
+permissions:
+  contents: write  # 允许创建 Release
+
+jobs:
+  check-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检查最新版本
+        id: version
+        run: |
+          # 通过重定向 Location 头获取版本号
+          LOCATION=$(curl -sI "https://dida365.com/static/getApp/download?type=linux_deb_x64" \
+            | grep -i "^location:" | tr -d '\r' | awk '{print $2}')
+          echo "redirect: $LOCATION"
+
+          # 从文件名中提取版本号，例如 dida-8.0.0-amd64.deb -> 8.0.0
+          VERSION=$(echo "$LOCATION" | grep -oP '(?<=dida-)\d+\.\d+\.\d+(?=-amd64\.deb)')
+          if [ -z "$VERSION" ]; then
+            echo "::error::无法提取版本号，Location: $LOCATION"
+            exit 1
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "当前最新版本: $VERSION"
+
+      - name: 检查 Release 是否已存在
+        id: check_release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Release v$VERSION 已存在，跳过"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "发现新版本 v$VERSION，准备打包"
+          fi
+
+      - name: 下载所有 Linux 包
+        if: steps.check_release.outputs.exists == 'false'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          mkdir -p dist
+
+          declare -A TYPES=(
+            ["linux_deb_x64"]="dida-${VERSION}-amd64.deb"
+            ["linux_deb_arm64"]="dida-${VERSION}-arm64.deb"
+            ["linux_rpm_x64"]="dida-${VERSION}-x86_64.rpm"
+            ["linux_rpm_arm64"]="dida-${VERSION}-aarch64.rpm"
+            ["linux_appimage_x64"]="dida-${VERSION}-x86_64.AppImage"
+            ["linux_appimage_arm64"]="dida-${VERSION}-arm64.AppImage"
+          )
+
+          for TYPE in "${!TYPES[@]}"; do
+            FILENAME="${TYPES[$TYPE]}"
+            echo "正在下载 $FILENAME ..."
+            curl -fL "https://dida365.com/static/getApp/download?type=$TYPE" \
+              -o "dist/$FILENAME"
+            ls -lh "dist/$FILENAME"
+          done
+
+      - name: 生成 SHA256 校验文件
+        if: steps.check_release.outputs.exists == 'false'
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: 创建 GitHub Release
+        if: steps.check_release.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+
+          gh release create "v$VERSION" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "滴答清单 Linux v$VERSION" \
+            --notes "## 滴答清单 Linux v${VERSION}
+
+自动从官网同步打包，原始下载地址：https://dida365.com/download
+
+### 包含文件
+
+| 格式 | 架构 | 文件 |
+|------|------|------|
+| DEB | x64 | \`dida-${VERSION}-amd64.deb\` |
+| DEB | ARM64 | \`dida-${VERSION}-arm64.deb\` |
+| RPM | x64 | \`dida-${VERSION}-x86_64.rpm\` |
+| RPM | ARM64 | \`dida-${VERSION}-aarch64.rpm\` |
+| AppImage | x64 | \`dida-${VERSION}-x86_64.AppImage\` |
+| AppImage | ARM64 | \`dida-${VERSION}-arm64.AppImage\` |
+
+### 校验
+\`\`\`
+$(cat dist/SHA256SUMS.txt)
+\`\`\`" \
+            dist/*
