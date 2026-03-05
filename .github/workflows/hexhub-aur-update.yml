@@ -1,24 +1,41 @@
-name: HexHub AUR 更新监控
+name: HexHub AUR 更新
 
 on:
-  schedule:
-    - cron: "0 0 * * *" # 每天 UTC 00:00 检查一次
-  workflow_dispatch: # 支持手动触发
+  workflow_call:
+    inputs:
+      version:
+        description: 上游最新版本号
+        required: true
+        type: string
+      download_url:
+        description: deb 包下载地址
+        required: true
+        type: string
+    secrets:
+      AUR_SSH_PRIVATE_KEY:
+        required: true
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 指定版本号（留空则自动获取最新版本）
+        required: false
+        type: string
+      download_url:
+        description: 指定下载地址（留空则自动获取）
+        required: false
+        type: string
 
 jobs:
-  check:
-    name: 检查版本
+  update:
+    name: 更新 AUR 包
     runs-on: ubuntu-latest
-    outputs:
-      needs_update: ${{ steps.check-version.outputs.needs_update }}
-      upstream_version: ${{ steps.upstream.outputs.version }}
-      download_url: ${{ steps.upstream.outputs.download_url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: 获取上游最新版本
+      - name: 获取上游最新版本（仅 workflow_dispatch 且未指定版本时）
         id: upstream
+        if: inputs.version == ''
         run: |
           RESPONSE=$(curl -s \
             -H "Origin: https://www.hexhub.cn" \
@@ -44,27 +61,27 @@ jobs:
           echo "上游最新版本: $VERSION"
           echo "下载地址: $DOWNLOAD_URL"
 
-      - name: 检查是否需要更新
-        id: check-version
-        uses: ./.github/actions/check-aur-version
-        with:
-          upstream_version: ${{ steps.upstream.outputs.version }}
-          aur_pkg_name: zerx-lab-hexhub-bin
+      - name: 确定目标版本和下载地址
+        id: version
+        run: |
+          VERSION="${{ inputs.version }}"
+          DOWNLOAD_URL="${{ inputs.download_url }}"
 
-  update:
-    name: 更新 AUR 包
-    runs-on: ubuntu-latest
-    needs: check
-    if: needs.check.outputs.needs_update == 'true'
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+          if [ -z "$VERSION" ]; then
+            VERSION="${{ steps.upstream.outputs.version }}"
+            DOWNLOAD_URL="${{ steps.upstream.outputs.download_url }}"
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "download_url=$DOWNLOAD_URL" >> "$GITHUB_OUTPUT"
+          echo "目标版本: $VERSION"
+          echo "下载地址: $DOWNLOAD_URL"
 
       - name: 计算 deb 包 SHA256
         id: sha256
         run: |
-          VERSION="${{ needs.check.outputs.upstream_version }}"
-          DOWNLOAD_URL="${{ needs.check.outputs.download_url }}"
+          VERSION="${{ steps.version.outputs.version }}"
+          DOWNLOAD_URL="${{ steps.version.outputs.download_url }}"
 
           echo "正在下载: $DOWNLOAD_URL"
           curl -fL "$DOWNLOAD_URL" -o "HexHub-amd64-deb-${VERSION}.deb"
@@ -75,7 +92,7 @@ jobs:
 
       - name: 更新 AUR PKGBUILD
         run: |
-          VERSION="${{ needs.check.outputs.upstream_version }}"
+          VERSION="${{ steps.version.outputs.version }}"
           SHA256="${{ steps.sha256.outputs.value }}"
 
           sed -i "s/^pkgver=.*/pkgver=${VERSION}/" hexhub/aur/PKGBUILD
@@ -93,5 +110,5 @@ jobs:
           commit_username: github-actions[bot]
           commit_email: github-actions[bot]@users.noreply.github.com
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-          commit_message: "Update zerx-lab-hexhub-bin to ${{ needs.check.outputs.upstream_version }}"
+          commit_message: "Update zerx-lab-hexhub-bin to ${{ steps.version.outputs.version }}"
           force_push: "true"

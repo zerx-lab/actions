@@ -1,0 +1,106 @@
+name: 检查所有服务更新
+
+on:
+  schedule:
+    - cron: "0 0 * * *" # 每天 UTC 00:00 检查一次
+  workflow_dispatch: # 支持手动触发
+
+jobs:
+  check-dida365:
+    name: 检查滴答清单版本
+    runs-on: ubuntu-latest
+    outputs:
+      needs_update: ${{ steps.check-version.outputs.needs_update }}
+      version: ${{ steps.upstream.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 获取上游最新版本
+        id: upstream
+        run: |
+          LOCATION=$(curl -sI "https://dida365.com/static/getApp/download?type=linux_deb_x64" \
+            | grep -i "^location:" | tr -d '\r' | awk '{print $2}')
+          echo "redirect: $LOCATION"
+
+          VERSION=$(echo "$LOCATION" | grep -oP '(?<=dida-)\d+\.\d+\.\d+(?=-amd64\.deb)')
+          if [ -z "$VERSION" ]; then
+            echo "::error::无法提取版本号，Location: $LOCATION"
+            exit 1
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "上游最新版本: $VERSION"
+
+      - name: 检查是否需要更新
+        id: check-version
+        uses: ./.github/actions/check-aur-version
+        with:
+          upstream_version: ${{ steps.upstream.outputs.version }}
+          aur_pkg_name: zerx-lab-dida365-bin
+
+  check-hexhub:
+    name: 检查 HexHub 版本
+    runs-on: ubuntu-latest
+    outputs:
+      needs_update: ${{ steps.check-version.outputs.needs_update }}
+      version: ${{ steps.upstream.outputs.version }}
+      download_url: ${{ steps.upstream.outputs.download_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 获取上游最新版本
+        id: upstream
+        run: |
+          RESPONSE=$(curl -s \
+            -H "Origin: https://www.hexhub.cn" \
+            -H "Referer: https://www.hexhub.cn/" \
+            "https://api.hexhub.cn/client/plugin/master-latest-version-list")
+
+          CODE=$(echo "$RESPONSE" | jq -r '.code')
+          if [ "$CODE" != "0" ]; then
+            echo "::error::API 返回异常，code=$CODE"
+            exit 1
+          fi
+
+          VERSION=$(echo "$RESPONSE" | jq -r '.data["linux-amd64-deb"].versionName')
+          DOWNLOAD_URL=$(echo "$RESPONSE" | jq -r '.data["linux-amd64-deb"].downloadUrl')
+
+          if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
+            echo "::error::无法从 API 提取版本号，响应：$RESPONSE"
+            exit 1
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "download_url=$DOWNLOAD_URL" >> "$GITHUB_OUTPUT"
+          echo "上游最新版本: $VERSION"
+          echo "下载地址: $DOWNLOAD_URL"
+
+      - name: 检查是否需要更新
+        id: check-version
+        uses: ./.github/actions/check-aur-version
+        with:
+          upstream_version: ${{ steps.upstream.outputs.version }}
+          aur_pkg_name: zerx-lab-hexhub-bin
+
+  update-dida365:
+    name: 更新滴答清单
+    needs: check-dida365
+    if: needs.check-dida365.outputs.needs_update == 'true'
+    uses: ./.github/workflows/dida365-linux-release.yml
+    with:
+      version: ${{ needs.check-dida365.outputs.version }}
+    secrets:
+      AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+
+  update-hexhub:
+    name: 更新 HexHub
+    needs: check-hexhub
+    if: needs.check-hexhub.outputs.needs_update == 'true'
+    uses: ./.github/workflows/hexhub-aur-update.yml
+    with:
+      version: ${{ needs.check-hexhub.outputs.version }}
+      download_url: ${{ needs.check-hexhub.outputs.download_url }}
+    secrets:
+      AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
