@@ -2,8 +2,8 @@ name: 滴答清单 AUR 更新监控
 
 on:
   schedule:
-    - cron: '0 */6 * * *'  # 每 6 小时检查一次
-  workflow_dispatch:         # 支持手动触发
+    - cron: "0 0 * * *" # 每 6 小时检查一次
+  workflow_dispatch: # 支持手动触发
 
 jobs:
   check-and-update:
