@@ -1,0 +1,114 @@
+name: Pencil AUR 更新
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: 上游最新版本号
+        required: true
+        type: string
+    secrets:
+      AUR_SSH_PRIVATE_KEY:
+        required: true
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 指定版本号（留空则自动获取最新版本）
+        required: false
+        type: string
+
+jobs:
+  update:
+    name: 更新 AUR 包
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 获取上游最新版本（仅 workflow_dispatch 且未指定版本时）
+        id: upstream
+        if: inputs.version == ''
+        run: |
+          SIGNED_URL=$(curl -sI "https://www.pencil.dev/download/Pencil-linux-x64.tar.gz" \
+            | grep -i '^location:' | tr -d '\r' | cut -d' ' -f2)
+
+          if [ -z "$SIGNED_URL" ]; then
+            echo "::error::无法获取下载重定向地址"
+            exit 1
+          fi
+
+          VERSION=$(curl -s -r 0-102400 "$SIGNED_URL" \
+            | tar -tzf - 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+
+          if [ -z "$VERSION" ]; then
+            echo "::error::无法从 tarball 目录名提取版本号"
+            exit 1
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "上游最新版本: $VERSION"
+
+      - name: 确定目标版本
+        id: version
+        run: |
+          VERSION="${{ inputs.version }}"
+          if [ -z "$VERSION" ]; then
+            VERSION="${{ steps.upstream.outputs.version }}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "目标版本: $VERSION"
+
+      - name: 计算 tar.gz 包 SHA256
+        id: sha256
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+
+          SIGNED_URL=$(curl -sI "https://www.pencil.dev/download/Pencil-linux-x64.tar.gz" \
+            | grep -i '^location:' | tr -d '\r' | cut -d' ' -f2)
+
+          echo "正在下载 Pencil-${VERSION}-linux-x64.tar.gz ..."
+          curl -fL "$SIGNED_URL" -o "Pencil-${VERSION}-linux-x64.tar.gz"
+
+          SHA256=$(sha256sum "Pencil-${VERSION}-linux-x64.tar.gz" | awk '{print $1}')
+          echo "SHA256: $SHA256"
+          echo "value=$SHA256" >> "$GITHUB_OUTPUT"
+
+      - name: 更新 AUR PKGBUILD
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          SHA256="${{ steps.sha256.outputs.value }}"
+
+          sed -i "s/^pkgver=.*/pkgver=${VERSION}/" pencil/aur/PKGBUILD
+          sed -i "s/^pkgrel=.*/pkgrel=1/" pencil/aur/PKGBUILD
+          sed -i "s/^sha256sums_x86_64=.*/sha256sums_x86_64=('${SHA256}')/" pencil/aur/PKGBUILD
+
+          echo "更新后的 PKGBUILD："
+          cat pencil/aur/PKGBUILD
+
+      - name: 生成 .SRCINFO
+        run: |
+          docker run --rm \
+            -v "$PWD/pencil/aur:/pkg" \
+            -w /pkg \
+            archlinux:base-devel \
+            bash -c "
+              pacman -Sy --noconfirm --needed sudo &&
+              useradd -m builder &&
+              echo 'builder ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers &&
+              chown -R builder /pkg &&
+              su builder -c 'makepkg --printsrcinfo > .SRCINFO'
+            "
+
+          echo "生成的 .SRCINFO："
+          cat pencil/aur/.SRCINFO
+
+      - name: 发布到 AUR
+        uses: KSXGitHub/github-actions-deploy-aur@v3.0.1
+        with:
+          pkgname: zerx-lab-pencil-bin
+          pkgbuild: pencil/aur/PKGBUILD
+          commit_username: github-actions[bot]
+          commit_email: github-actions[bot]@users.noreply.github.com
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: "Update zerx-lab-pencil-bin to ${{ steps.version.outputs.version }}"
+          force_push: "true"
