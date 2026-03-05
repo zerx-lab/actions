@@ -1,0 +1,92 @@
+name: Clash Party AUR 更新监控
+
+on:
+  schedule:
+    - cron: "0 2 * * *" # 每天 UTC 02:00 检查一次
+  workflow_dispatch: # 支持手动触发
+
+jobs:
+  check-and-update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 获取上游最新版本
+        id: upstream
+        run: |
+          RESPONSE=$(curl -s \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/mihomo-party-org/clash-party/releases/latest")
+
+          VERSION=$(echo "$RESPONSE" | jq -r '.tag_name // empty' | sed 's/^v//')
+
+          if [ -z "$VERSION" ]; then
+            echo "::error::无法从 GitHub API 提取版本号，响应：$RESPONSE"
+            exit 1
+          fi
+
+          DOWNLOAD_URL="https://github.com/mihomo-party-org/clash-party/releases/download/v${VERSION}/clash-party_${VERSION}_amd64.deb"
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "download_url=$DOWNLOAD_URL" >> "$GITHUB_OUTPUT"
+          echo "上游最新版本: $VERSION"
+          echo "下载地址: $DOWNLOAD_URL"
+
+      - name: 对比 AUR 当前版本
+        id: check
+        run: |
+          UPSTREAM="${{ steps.upstream.outputs.version }}"
+          AUR_VERSION=$(curl -s "https://aur.archlinux.org/rpc/v5/info?arg[]=clash-party-bin" \
+            | jq -r '.results[0].Version // empty' | cut -d'-' -f1)
+
+          echo "上游版本: $UPSTREAM"
+          echo "AUR 版本:  ${AUR_VERSION:-（包不存在或未发布）}"
+
+          if [ "$UPSTREAM" = "$AUR_VERSION" ]; then
+            echo "needs_update=false" >> "$GITHUB_OUTPUT"
+            echo "AUR 已是最新，跳过更新"
+          else
+            echo "needs_update=true" >> "$GITHUB_OUTPUT"
+            echo "发现新版本，准备更新 AUR: ${AUR_VERSION:-无} -> $UPSTREAM"
+          fi
+
+      - name: 计算 deb 包 SHA256
+        id: sha256
+        if: steps.check.outputs.needs_update == 'true'
+        run: |
+          VERSION="${{ steps.upstream.outputs.version }}"
+          DOWNLOAD_URL="${{ steps.upstream.outputs.download_url }}"
+
+          echo "正在下载: $DOWNLOAD_URL"
+          curl -fL "$DOWNLOAD_URL" -o "clash-party-${VERSION}.deb"
+
+          SHA256=$(sha256sum "clash-party-${VERSION}.deb" | awk '{print $1}')
+          echo "SHA256: $SHA256"
+          echo "value=$SHA256" >> "$GITHUB_OUTPUT"
+
+      - name: 更新 AUR PKGBUILD
+        if: steps.check.outputs.needs_update == 'true'
+        run: |
+          VERSION="${{ steps.upstream.outputs.version }}"
+          SHA256="${{ steps.sha256.outputs.value }}"
+
+          sed -i "s/^pkgver=.*/pkgver=${VERSION}/" clash-party/aur/PKGBUILD
+          sed -i "s/^pkgrel=.*/pkgrel=1/" clash-party/aur/PKGBUILD
+          sed -i "s/^sha256sums_x86_64=.*/sha256sums_x86_64=('${SHA256}')/" clash-party/aur/PKGBUILD
+
+          echo "更新后的 PKGBUILD："
+          cat clash-party/aur/PKGBUILD
+
+      - name: 发布到 AUR
+        if: steps.check.outputs.needs_update == 'true'
+        uses: KSXGitHub/github-actions-deploy-aur@v3.0.1
+        with:
+          pkgname: clash-party-bin
+          pkgbuild: clash-party/aur/PKGBUILD
+          commit_username: github-actions[bot]
+          commit_email: github-actions[bot]@users.noreply.github.com
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: "Update clash-party-bin to ${{ steps.upstream.outputs.version }}"
+          force_push: "true"
