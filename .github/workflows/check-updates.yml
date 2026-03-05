@@ -39,6 +39,41 @@ jobs:
           upstream_version: ${{ steps.upstream.outputs.version }}
           aur_pkg_name: zerx-lab-dida365-bin
 
+  check-fluxdown:
+    name: 检查 FluxDown 版本
+    runs-on: ubuntu-latest
+    outputs:
+      needs_update: ${{ steps.check-version.outputs.needs_update }}
+      version: ${{ steps.upstream.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 获取上游最新版本
+        id: upstream
+        run: |
+          RESPONSE=$(curl -sf "https://fluxdown.zerx.dev/api/release")
+          if [ $? -ne 0 ]; then
+            echo "::error::无法访问 FluxDown API"
+            exit 1
+          fi
+
+          VERSION=$(echo "$RESPONSE" | jq -r '.version')
+          if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
+            echo "::error::无法从 API 提取版本号，响应：$RESPONSE"
+            exit 1
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "上游最新版本: $VERSION"
+
+      - name: 检查是否需要更新
+        id: check-version
+        uses: ./.github/actions/check-aur-version
+        with:
+          upstream_version: ${{ steps.upstream.outputs.version }}
+          aur_pkg_name: zerx-lab-fluxdown-bin
+
   check-hexhub:
     name: 检查 HexHub 版本
     runs-on: ubuntu-latest
@@ -83,6 +118,16 @@ jobs:
         with:
           upstream_version: ${{ steps.upstream.outputs.version }}
           aur_pkg_name: zerx-lab-hexhub-bin
+
+  update-fluxdown:
+    name: 更新 FluxDown
+    needs: check-fluxdown
+    if: needs.check-fluxdown.outputs.needs_update == 'true'
+    uses: ./.github/workflows/fluxdown-aur-update.yml
+    with:
+      version: ${{ needs.check-fluxdown.outputs.version }}
+    secrets:
+      AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
 
   update-dida365:
     name: 更新滴答清单
