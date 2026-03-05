@@ -27,7 +27,7 @@ jobs:
             exit 1
           fi
 
-          DOWNLOAD_URL="https://github.com/mihomo-party-org/clash-party/releases/download/v${VERSION}/clash-party_${VERSION}_amd64.deb"
+          DOWNLOAD_URL="https://github.com/mihomo-party-org/clash-party/releases/download/v${VERSION}/clash-party-linux-${VERSION}-amd64.deb"
 
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "download_url=$DOWNLOAD_URL" >> "$GITHUB_OUTPUT"

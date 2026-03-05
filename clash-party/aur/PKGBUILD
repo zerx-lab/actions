@@ -35,7 +35,7 @@ provides=('clash-party')
 conflicts=('clash-party')
 options=('!strip')
 
-source_x86_64=("clash-party-${pkgver}.deb::https://github.com/mihomo-party-org/clash-party/releases/download/v${pkgver}/clash-party_${pkgver}_amd64.deb")
+source_x86_64=("clash-party-${pkgver}.deb::https://github.com/mihomo-party-org/clash-party/releases/download/v${pkgver}/clash-party-linux-${pkgver}-amd64.deb")
 sha256sums_x86_64=('SKIP')
 
 package() {

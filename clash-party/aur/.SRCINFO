@@ -27,7 +27,7 @@ pkgbase = clash-party-bin
 	provides = clash-party
 	conflicts = clash-party
 	options = !strip
-	source_x86_64 = clash-party-1.9.2.deb::https://github.com/mihomo-party-org/clash-party/releases/download/v1.9.2/clash-party_1.9.2_amd64.deb
+	source_x86_64 = clash-party-1.9.2.deb::https://github.com/mihomo-party-org/clash-party/releases/download/v1.9.2/clash-party-linux-1.9.2-amd64.deb
 	sha256sums_x86_64 = SKIP
 
 pkgname = clash-party-bin
