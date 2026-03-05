@@ -1,0 +1,44 @@
+name: 检查 AUR 版本是否需要更新
+description: 对比上游版本与 AUR 当前版本，输出是否需要更新
+
+inputs:
+  upstream_version:
+    description: 上游最新版本号
+    required: true
+  aur_pkg_name:
+    description: AUR 包名
+    required: true
+
+outputs:
+  needs_update:
+    description: 是否需要更新（true/false）
+    value: ${{ steps.compare.outputs.needs_update }}
+  aur_version:
+    description: AUR 当前版本号
+    value: ${{ steps.compare.outputs.aur_version }}
+
+runs:
+  using: composite
+  steps:
+    - name: 对比上游与 AUR 版本
+      id: compare
+      shell: bash
+      run: |
+        UPSTREAM="${{ inputs.upstream_version }}"
+        AUR_PKG="${{ inputs.aur_pkg_name }}"
+
+        AUR_VERSION=$(curl -s "https://aur.archlinux.org/rpc/v5/info?arg[]=${AUR_PKG}" \
+          | jq -r '.results[0].Version // empty' | cut -d'-' -f1)
+
+        echo "上游版本: $UPSTREAM"
+        echo "AUR 版本:  ${AUR_VERSION:-（包不存在或未发布）}"
+
+        echo "aur_version=${AUR_VERSION}" >> "$GITHUB_OUTPUT"
+
+        if [ "$UPSTREAM" = "$AUR_VERSION" ]; then
+          echo "needs_update=false" >> "$GITHUB_OUTPUT"
+          echo "AUR 已是最新，无需更新"
+        else
+          echo "needs_update=true" >> "$GITHUB_OUTPUT"
+          echo "发现新版本，需要更新 AUR: ${AUR_VERSION:-无} -> $UPSTREAM"
+        fi
