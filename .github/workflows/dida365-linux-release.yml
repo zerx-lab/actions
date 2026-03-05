@@ -32,7 +32,7 @@ jobs:
         id: check
         run: |
           UPSTREAM="${{ steps.upstream.outputs.version }}"
-          AUR_VERSION=$(curl -s "https://aur.archlinux.org/rpc/v5/info?arg[]=zerx-lab-dida-bin" \
+          AUR_VERSION=$(curl -s "https://aur.archlinux.org/rpc/v5/info?arg[]=zerx-lab-dida365-bin" \
             | jq -r '.results[0].Version' | cut -d'-' -f1)
 
           echo "上游版本: $UPSTREAM"
@@ -61,21 +61,21 @@ jobs:
         if: steps.check.outputs.needs_update == 'true'
         run: |
           VERSION="${{ steps.upstream.outputs.version }}"
-          sed -i "s/^pkgver=.*/pkgver=${VERSION}/" dida/aur/PKGBUILD
-          sed -i "s/^pkgrel=.*/pkgrel=1/" dida/aur/PKGBUILD
-          sed -i "s/^sha256sums_x86_64=.*/sha256sums_x86_64=('${{ steps.sha256.outputs.value }}')/" dida/aur/PKGBUILD
+          sed -i "s/^pkgver=.*/pkgver=${VERSION}/" dida365/aur/PKGBUILD
+          sed -i "s/^pkgrel=.*/pkgrel=1/" dida365/aur/PKGBUILD
+          sed -i "s/^sha256sums_x86_64=.*/sha256sums_x86_64=('${{ steps.sha256.outputs.value }}')/" dida365/aur/PKGBUILD
 
           echo "更新后的 PKGBUILD："
-          cat dida/aur/PKGBUILD
+          cat dida365/aur/PKGBUILD
 
       - name: 发布到 AUR
         if: steps.check.outputs.needs_update == 'true'
         uses: KSXGitHub/github-actions-deploy-aur@v3.0.1
         with:
-          pkgname: zerx-lab-dida-bin
-          pkgbuild: dida/aur/PKGBUILD
+          pkgname: zerx-lab-dida365-bin
+          pkgbuild: dida365/aur/PKGBUILD
           commit_username: github-actions[bot]
           commit_email: github-actions[bot]@users.noreply.github.com
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-          commit_message: "Update zerx-lab-dida-bin to ${{ steps.upstream.outputs.version }}"
+          commit_message: "Update zerx-lab-dida365-bin to ${{ steps.upstream.outputs.version }}"
           force_push: "true"

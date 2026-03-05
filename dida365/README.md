@@ -4,7 +4,7 @@
 
 ## 工作流
 
-**[`dida-linux-release.yml`](../.github/workflows/dida-linux-release.yml)**
+**[`dida365-linux-release.yml`](../.github/workflows/dida365-linux-release.yml)**
 
 | 触发方式 | 说明 |
 |----------|------|
@@ -12,30 +12,31 @@
 | `workflow_dispatch` | 在 Actions 页面手动触发 |
 
 执行流程：
-1. 检测官网最新版本号（通过 HTTP 重定向）
+1. 检测官网最新版本号（通过 HTTP
+ 重定向）
 2. 如已有对应 Release 则跳过
 3. 下载全部 Linux 包（DEB / RPM / AppImage，x64 & ARM64）
 4. 生成 SHA256 校验文件
 5. 创建 GitHub Release，上传所有包
-6. 更新 `dida/aur/PKGBUILD` 版本和 SHA256，推送到 AUR
+6. 更新 `dida365/aur/PKGBUILD` 版本和 SHA256，推送到 AUR
 
 ## 目录
 
 ```
-dida/
+dida365/
   aur/
-    PKGBUILD    # AUR 包定义（dida365-bin），由 CI 自动更新
+    PKGBUILD    # AUR 包定义（zerx-lab-dida365-bin），由 CI 自动更新
   README.md     # 本文件
 ```
 
 ## AUR 包
 
-包名：`dida365-bin`，从官方 `.deb` 重新打包为 Arch 可用格式。
+包名：`zerx-lab-dida365-bin`，从官方 `.deb` 重新打包为 Arch 可用格式。
 
 **本地验证打包：**
 
 ```bash
-cd dida/aur
+cd dida365/aur
 makepkg -si
 ```
 

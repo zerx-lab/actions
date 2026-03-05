@@ -1,7 +1,7 @@
 # Maintainer: zero <zero@localhost>
 # Automatically updated by GitHub Actions
 
-pkgname=zerx-lab-dida-bin
+pkgname=zerx-lab-dida365-bin
 pkgver=8.0.0
 pkgrel=1
 pkgdesc="滴答清单 - 跨平台 Todo & Task Manager"
