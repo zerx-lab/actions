@@ -75,9 +75,31 @@ package() {
             "${pkgdir}/usr/share/icons/hicolor/1024x1024/apps/zed.png"
     fi
 
-    # ── desktop 文件（从包内直接安装，由官方模板 envsubst 生成）──────────
-    if [ -f "${_appdir}/share/applications/dev.zed.Zed-Nightly.desktop" ]; then
-        install -Dm644 "${_appdir}/share/applications/dev.zed.Zed-Nightly.desktop" \
-            "${pkgdir}/usr/share/applications/dev.zed.Zed-Nightly.desktop"
+    # ── desktop 文件（对齐官方 install.sh 的 sed 替换逻辑）──────────────
+    # install.sh 安装后会执行：
+    #   sed -i "s|Icon=zed|Icon=~/.local/zed-nightly.app/share/icons/.../zed.png|g"
+    #   sed -i "s|Exec=zed|Exec=~/.local/zed-nightly.app/bin/zed|g"
+    # 系统级安装对应路径前缀改为 /usr/lib/zed-nightly.app/
+    local _desktop_src="${_appdir}/share/applications/dev.zed.Zed-Nightly.desktop"
+    local _desktop_dst="${pkgdir}/usr/share/applications/dev.zed.Zed-Nightly.desktop"
+    local _app_prefix="/usr/lib/zed-nightly.app"
+
+    if [ -f "${_desktop_src}" ]; then
+        install -Dm644 "${_desktop_src}" "${_desktop_dst}"
+
+        # Icon：系统级安装图标已在 /usr/share/icons/hicolor/ 标准路径下，
+        # 保持 Icon=zed 让桌面环境通过 hicolor 主题查找，不做替换。
+        # （install.sh 改为绝对路径是因为它将整个 .app 解压到 ~/.local/，
+        #   share/icons/ 在 .app 内存在；系统级安装该路径并不存在）
+
+        # Exec：改为 cli 的绝对路径（与 install.sh 一致）
+        sed -i "s|Exec=zed |Exec=${_app_prefix}/bin/zed |g" \
+            "${_desktop_dst}"
+        sed -i "s|Exec=zed$|Exec=${_app_prefix}/bin/zed|g" \
+            "${_desktop_dst}"
+
+        # TryExec：同样改为绝对路径，避免依赖 PATH
+        sed -i "s|TryExec=zed|TryExec=${_app_prefix}/bin/zed|g" \
+            "${_desktop_dst}"
     fi
 }
