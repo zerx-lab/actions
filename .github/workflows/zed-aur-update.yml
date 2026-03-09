@@ -1,0 +1,164 @@
+name: Zed Nightly AUR 更新
+
+on:
+  workflow_call:
+    inputs:
+      pkgver:
+        description: 包版本号（格式：0.YYYYMMDD.shortsha）
+        required: true
+        type: string
+      tag_name:
+        description: Release tag 名称
+        required: true
+        type: string
+      sha256:
+        description: tar.gz 包的 SHA256 值
+        required: true
+        type: string
+    secrets:
+      AUR_SSH_PRIVATE_KEY:
+        required: true
+  workflow_dispatch:
+    inputs:
+      pkgver:
+        description: 指定版本号（留空则从最新 Release 自动获取）
+        required: false
+        type: string
+      tag_name:
+        description: 指定 Release tag（留空则使用 zed-nightly-latest）
+        required: false
+        type: string
+
+jobs:
+  update:
+    name: 更新 AUR 包
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 从最新 Release 获取信息（仅 workflow_dispatch 且未指定参数时）
+        id: auto
+        if: inputs.pkgver == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ inputs.tag_name }}"
+          if [ -z "$TAG" ]; then
+            TAG="zed-nightly-latest"
+          fi
+
+          RELEASE_INFO=$(gh release view "$TAG" \
+            --repo "${{ github.repository }}" \
+            --json tagName,assets 2>/dev/null)
+
+          if [ -z "$RELEASE_INFO" ] || [ "$RELEASE_INFO" = "null" ]; then
+            echo "::error::无法获取 Release 信息：$TAG"
+            exit 1
+          fi
+
+          # 获取 sha256 文件内容
+          SHA256_URL=$(echo "$RELEASE_INFO" | jq -r \
+            '.assets[] | select(.name == "zed-nightly-linux-x86_64.tar.gz.sha256") | .url')
+
+          if [ -z "$SHA256_URL" ] || [ "$SHA256_URL" = "null" ]; then
+            echo "::error::Release 中未找到 sha256 文件"
+            exit 1
+          fi
+
+          SHA256=$(gh api "$SHA256_URL" \
+            -H "Accept: application/octet-stream" 2>/dev/null | awk '{print $1}')
+
+          if [ -z "$SHA256" ]; then
+            echo "::error::无法读取 SHA256 值"
+            exit 1
+          fi
+
+          # 从 tag 名称推导 pkgver，格式：zed-nightly-YYYYMMDD-shortsha
+          REAL_TAG=$(echo "$RELEASE_INFO" | jq -r '.tagName')
+          if echo "$REAL_TAG" | grep -qE '^zed-nightly-[0-9]{8}-[0-9a-f]{7}$'; then
+            DATE=$(echo "$REAL_TAG" | sed 's/zed-nightly-\([0-9]\{8\}\)-.*/\1/')
+            SHORT=$(echo "$REAL_TAG" | sed 's/zed-nightly-[0-9]\{8\}-\([0-9a-f]\{7\}\)/\1/')
+            PKGVER="0.${DATE}.${SHORT}"
+          else
+            echo "::error::无法从 tag 名称推导 pkgver：$REAL_TAG"
+            exit 1
+          fi
+
+          echo "pkgver=$PKGVER" >> "$GITHUB_OUTPUT"
+          echo "tag_name=$REAL_TAG" >> "$GITHUB_OUTPUT"
+          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
+          echo "自动获取 -> pkgver=$PKGVER, tag=$REAL_TAG, sha256=$SHA256"
+
+      - name: 确定最终参数
+        id: params
+        run: |
+          PKGVER="${{ inputs.pkgver }}"
+          TAG_NAME="${{ inputs.tag_name }}"
+          SHA256="${{ inputs.sha256 }}"
+
+          if [ -z "$PKGVER" ]; then
+            PKGVER="${{ steps.auto.outputs.pkgver }}"
+            TAG_NAME="${{ steps.auto.outputs.tag_name }}"
+            SHA256="${{ steps.auto.outputs.sha256 }}"
+          fi
+
+          if [ -z "$PKGVER" ] || [ -z "$SHA256" ]; then
+            echo "::error::缺少必要参数：pkgver=$PKGVER, sha256=$SHA256"
+            exit 1
+          fi
+
+          if [ -z "$TAG_NAME" ]; then
+            TAG_NAME="zed-nightly-latest"
+          fi
+
+          DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/${TAG_NAME}/zed-nightly-linux-x86_64.tar.gz"
+
+          echo "pkgver=$PKGVER" >> "$GITHUB_OUTPUT"
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
+          echo "download_url=$DOWNLOAD_URL" >> "$GITHUB_OUTPUT"
+          echo "最终参数: pkgver=$PKGVER, tag=$TAG_NAME"
+          echo "下载地址: $DOWNLOAD_URL"
+
+      - name: 更新 PKGBUILD
+        run: |
+          PKGVER="${{ steps.params.outputs.pkgver }}"
+          SHA256="${{ steps.params.outputs.sha256 }}"
+          DOWNLOAD_URL="${{ steps.params.outputs.download_url }}"
+
+          sed -i "s|^pkgver=.*|pkgver=${PKGVER}|" zed/aur/PKGBUILD
+          sed -i "s|^pkgrel=.*|pkgrel=1|" zed/aur/PKGBUILD
+          sed -i "s|^source_x86_64=.*|source_x86_64=(\"zed-nightly-linux-x86_64.tar.gz::${DOWNLOAD_URL}\")|" zed/aur/PKGBUILD
+          sed -i "s|^sha256sums_x86_64=.*|sha256sums_x86_64=('${SHA256}')|" zed/aur/PKGBUILD
+
+          echo "更新后的 PKGBUILD："
+          cat zed/aur/PKGBUILD
+
+      - name: 生成 .SRCINFO
+        run: |
+          docker run --rm \
+            -v "$PWD/zed/aur:/pkg" \
+            -w /pkg \
+            archlinux:base-devel \
+            bash -c "
+              pacman -Sy --noconfirm --needed sudo &&
+              useradd -m builder &&
+              echo 'builder ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers &&
+              chown -R builder /pkg &&
+              su builder -c 'makepkg --printsrcinfo > .SRCINFO'
+            "
+
+          echo "生成的 .SRCINFO："
+          cat zed/aur/.SRCINFO
+
+      - name: 发布到 AUR
+        uses: KSXGitHub/github-actions-deploy-aur@v3.0.1
+        with:
+          pkgname: zerx-lab-zed-nightly-bin
+          pkgbuild: zed/aur/PKGBUILD
+          commit_username: github-actions[bot]
+          commit_email: github-actions[bot]@users.noreply.github.com
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: "Update zerx-lab-zed-nightly-bin to ${{ steps.params.outputs.pkgver }}"
+          force_push: "true"

@@ -1,4 +1,4 @@
-name: 检查所有服务更新（含 Pencil）
+name: 检查所有服务更新（含 Pencil 和 Zed Nightly）
 
 on:
   schedule:
@@ -196,5 +196,87 @@ jobs:
     uses: ./.github/workflows/pencil-aur-update.yml
     with:
       version: ${{ needs.check-pencil.outputs.version }}
+    secrets:
+      AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+
+  check-zed-nightly:
+    name: 检查 Zed Nightly（main 分支 commit 变化）
+    runs-on: ubuntu-latest
+    outputs:
+      needs_update: ${{ steps.compare.outputs.needs_update }}
+      commit_sha: ${{ steps.upstream.outputs.commit_sha }}
+      commit_short: ${{ steps.upstream.outputs.commit_short }}
+      build_date: ${{ steps.upstream.outputs.build_date }}
+    steps:
+      - name: 获取 Zed main 分支最新 commit
+        id: upstream
+        run: |
+          RESPONSE=$(curl -sf \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            "https://api.github.com/repos/zed-industries/zed/commits/main")
+
+          if [ $? -ne 0 ] || [ -z "$RESPONSE" ]; then
+            echo "::error::无法访问 Zed GitHub API"
+            exit 1
+          fi
+
+          COMMIT_SHA=$(echo "$RESPONSE" | jq -r '.sha')
+          if [ -z "$COMMIT_SHA" ] || [ "$COMMIT_SHA" = "null" ]; then
+            echo "::error::无法获取 commit SHA"
+            exit 1
+          fi
+
+          COMMIT_SHORT="${COMMIT_SHA:0:7}"
+          BUILD_DATE=$(date -u +%Y%m%d)
+
+          echo "commit_sha=$COMMIT_SHA" >> "$GITHUB_OUTPUT"
+          echo "commit_short=$COMMIT_SHORT" >> "$GITHUB_OUTPUT"
+          echo "build_date=$BUILD_DATE" >> "$GITHUB_OUTPUT"
+          echo "Zed main 最新 commit: $COMMIT_SHA ($COMMIT_SHORT)"
+
+      - name: 对比上次构建的 commit（通过 Release tag 判断）
+        id: compare
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          COMMIT_SHORT="${{ steps.upstream.outputs.commit_short }}"
+          BUILD_DATE="${{ steps.upstream.outputs.build_date }}"
+          EXPECTED_TAG="zed-nightly-${BUILD_DATE}-${COMMIT_SHORT}"
+
+          echo "期望 Tag: $EXPECTED_TAG"
+
+          # 检查今天该 commit 是否已经构建过
+          EXISTS=$(gh release view "$EXPECTED_TAG" \
+            --repo "${{ github.repository }}" \
+            --json tagName 2>/dev/null | jq -r '.tagName // empty')
+
+          if [ "$EXISTS" = "$EXPECTED_TAG" ]; then
+            echo "needs_update=false" >> "$GITHUB_OUTPUT"
+            echo "今日 Zed Nightly 已构建（$EXPECTED_TAG），无需重复构建"
+          else
+            echo "needs_update=true" >> "$GITHUB_OUTPUT"
+            echo "发现新 commit 或尚未构建，需要构建 Zed Nightly"
+          fi
+
+  build-zed-nightly:
+    name: 构建并发布 Zed Nightly
+    needs: check-zed-nightly
+    if: needs.check-zed-nightly.outputs.needs_update == 'true'
+    uses: ./.github/workflows/zed-nightly-build.yml
+    with:
+      commit_sha: ${{ needs.check-zed-nightly.outputs.commit_sha }}
+      commit_short: ${{ needs.check-zed-nightly.outputs.commit_short }}
+      build_date: ${{ needs.check-zed-nightly.outputs.build_date }}
+    secrets: inherit
+
+  update-zed-aur:
+    name: 更新 Zed Nightly AUR 包
+    needs: build-zed-nightly
+    if: needs.build-zed-nightly.result == 'success'
+    uses: ./.github/workflows/zed-aur-update.yml
+    with:
+      pkgver: ${{ needs.build-zed-nightly.outputs.pkgver }}
+      tag_name: ${{ needs.build-zed-nightly.outputs.tag_name }}
+      sha256: ${{ needs.build-zed-nightly.outputs.sha256 }}
     secrets:
       AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}

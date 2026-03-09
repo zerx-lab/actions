@@ -1,0 +1,249 @@
+name: Zed Nightly 构建与发布
+
+on:
+  workflow_call:
+    inputs:
+      commit_sha:
+        description: Zed main 分支最新 commit SHA
+        required: true
+        type: string
+      commit_short:
+        description: Zed main 分支最新 commit 短 SHA（7位）
+        required: true
+        type: string
+      build_date:
+        description: 构建日期（YYYYMMDD 格式）
+        required: true
+        type: string
+    outputs:
+      pkgver:
+        description: 生成的包版本号（0.YYYYMMDD.shortsha）
+        value: ${{ jobs.build.outputs.pkgver }}
+      tag_name:
+        description: 发布的 Release Tag 名称
+        value: ${{ jobs.build.outputs.tag_name }}
+      sha256:
+        description: 打包后二进制文件的 SHA256 值
+        value: ${{ jobs.build.outputs.sha256 }}
+      commit_sha:
+        description: 构建时使用的完整 commit SHA
+        value: ${{ jobs.build.outputs.commit_sha }}
+      commit_short:
+        description: 构建时使用的短 commit SHA（7位）
+        value: ${{ jobs.build.outputs.commit_short }}
+      build_date:
+        description: 构建日期（YYYYMMDD 格式）
+        value: ${{ jobs.build.outputs.build_date }}
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: 指定 commit SHA（留空则使用最新）
+        required: false
+        type: string
+
+jobs:
+  build:
+    name: 编译 Zed
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    outputs:
+      pkgver: ${{ steps.meta.outputs.pkgver }}
+      tag_name: ${{ steps.meta.outputs.tag_name }}
+      commit_sha: ${{ steps.resolve.outputs.commit_sha }}
+      commit_short: ${{ steps.resolve.outputs.commit_short }}
+      build_date: ${{ steps.resolve.outputs.build_date }}
+      sha256: ${{ steps.package.outputs.sha256 }}
+
+    steps:
+      - name: 获取 Zed 最新 commit 信息
+        id: resolve
+        run: |
+          if [ -n "${{ inputs.commit_sha }}" ]; then
+            COMMIT_SHA="${{ inputs.commit_sha }}"
+          else
+            COMMIT_SHA=$(curl -sf \
+              -H "Authorization: Bearer ${{ github.token }}" \
+              "https://api.github.com/repos/zed-industries/zed/commits/main" \
+              | jq -r '.sha')
+          fi
+
+          if [ -z "$COMMIT_SHA" ] || [ "$COMMIT_SHA" = "null" ]; then
+            echo "::error::无法获取 Zed 最新 commit SHA"
+            exit 1
+          fi
+
+          COMMIT_SHORT="${COMMIT_SHA:0:7}"
+          BUILD_DATE=$(date -u +%Y%m%d)
+
+          echo "commit_sha=$COMMIT_SHA" >> "$GITHUB_OUTPUT"
+          echo "commit_short=$COMMIT_SHORT" >> "$GITHUB_OUTPUT"
+          echo "build_date=$BUILD_DATE" >> "$GITHUB_OUTPUT"
+          echo "Commit: $COMMIT_SHA ($COMMIT_SHORT), 日期: $BUILD_DATE"
+
+      - name: 生成版本元数据
+        id: meta
+        run: |
+          BUILD_DATE="${{ steps.resolve.outputs.build_date }}"
+          COMMIT_SHORT="${{ steps.resolve.outputs.commit_short }}"
+          PKGVER="0.${BUILD_DATE}.${COMMIT_SHORT}"
+          TAG_NAME="zed-nightly-${BUILD_DATE}-${COMMIT_SHORT}"
+
+          echo "pkgver=$PKGVER" >> "$GITHUB_OUTPUT"
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "版本号: $PKGVER"
+          echo "Tag: $TAG_NAME"
+
+      - name: 检出 Zed 源码
+        uses: actions/checkout@v4
+        with:
+          repository: zed-industries/zed
+          ref: ${{ steps.resolve.outputs.commit_sha }}
+          path: zed-src
+          fetch-depth: 1
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: 缓存 Rust 编译产物
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            zed-src/target
+          key: ${{ runner.os }}-cargo-zed-${{ hashFiles('zed-src/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-zed-
+
+      - name: 安装系统依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libssl-dev \
+            pkg-config \
+            libfontconfig1-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libgit2-dev \
+            libsqlite3-dev \
+            libzstd-dev \
+            libasound2-dev \
+            libwayland-dev \
+            wayland-protocols \
+            clang \
+            mold
+
+      - name: 编译 Zed
+        working-directory: zed-src
+        run: |
+          export RUSTFLAGS="-C link-arg=-fuse-ld=mold"
+          cargo build --release --package zed
+
+      - name: 打包二进制文件
+        id: package
+        run: |
+          PKGVER="${{ steps.meta.outputs.pkgver }}"
+          TAG_NAME="${{ steps.meta.outputs.tag_name }}"
+          ARCHIVE_NAME="zed-nightly-linux-x86_64.tar.gz"
+
+          mkdir -p dist/zed-${PKGVER}
+          cp zed-src/target/release/zed dist/zed-${PKGVER}/zed
+
+          # 如果有图标，也一并打包
+          if [ -f "zed-src/assets/icons/logo_96.png" ]; then
+            cp zed-src/assets/icons/logo_96.png dist/zed-${PKGVER}/zed.png
+          fi
+
+          cd dist
+          tar -czf "${ARCHIVE_NAME}" zed-${PKGVER}/
+          sha256sum "${ARCHIVE_NAME}" > "${ARCHIVE_NAME}.sha256"
+
+          SHA256=$(awk '{print $1}' "${ARCHIVE_NAME}.sha256")
+          echo "sha256=${SHA256}" >> "$GITHUB_OUTPUT"
+
+          echo "打包完成: $ARCHIVE_NAME"
+          echo "SHA256: ${SHA256}"
+
+      - name: 删除已有的同名 Tag 和 Release（如果存在）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG_NAME="${{ steps.meta.outputs.tag_name }}"
+
+          # 尝试删除已有 release
+          gh release delete "$TAG_NAME" --repo "${{ github.repository }}" --yes 2>/dev/null || true
+
+          # 尝试删除已有 tag
+          git -C zed-src tag -d "$TAG_NAME" 2>/dev/null || true
+          gh api -X DELETE "repos/${{ github.repository }}/git/refs/tags/$TAG_NAME" 2>/dev/null || true
+
+      - name: 发布到 GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG_NAME="${{ steps.meta.outputs.tag_name }}"
+          PKGVER="${{ steps.meta.outputs.pkgver }}"
+          COMMIT_SHA="${{ steps.resolve.outputs.commit_sha }}"
+          BUILD_DATE="${{ steps.resolve.outputs.build_date }}"
+
+          gh release create "$TAG_NAME" \
+            --repo "${{ github.repository }}" \
+            --title "Zed Nightly ${BUILD_DATE} (${COMMIT_SHA:0:7})" \
+            --notes "## Zed Nightly 构建
+
+**构建日期**: ${BUILD_DATE}
+**上游 Commit**: [\`${COMMIT_SHA:0:7}\`](https://github.com/zed-industries/zed/commit/${COMMIT_SHA})
+**版本号**: ${PKGVER}
+
+### 安装方法
+
+**直接下载**：
+\`\`\`bash
+curl -L https://github.com/${{ github.repository }}/releases/download/${TAG_NAME}/zed-nightly-linux-x86_64.tar.gz | tar -xz
+sudo install -Dm755 zed-*/zed /usr/local/bin/zed
+\`\`\`
+
+**通过 AUR（推荐）**：
+\`\`\`bash
+yay -S zerx-lab-zed-nightly-bin
+\`\`\`
+
+### 文件
+- \`zed-nightly-linux-x86_64.tar.gz\`：x86_64 Linux 预编译二进制
+- \`zed-nightly-linux-x86_64.tar.gz.sha256\`：SHA256 校验文件
+" \
+            --latest=false \
+            dist/zed-nightly-linux-x86_64.tar.gz \
+            dist/zed-nightly-linux-x86_64.tar.gz.sha256
+
+          echo "已发布 Release: $TAG_NAME"
+
+      - name: 更新 latest Release 指向最新 nightly
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG_NAME="${{ steps.meta.outputs.tag_name }}"
+
+          # 删除旧的 zed-nightly-latest release（如果存在）
+          gh release delete "zed-nightly-latest" \
+            --repo "${{ github.repository }}" \
+            --yes 2>/dev/null || true
+
+          gh api -X DELETE \
+            "repos/${{ github.repository }}/git/refs/tags/zed-nightly-latest" \
+            2>/dev/null || true
+
+          # 创建新的 latest release（供 PKGBUILD 中固定 URL 使用）
+          gh release create "zed-nightly-latest" \
+            --repo "${{ github.repository }}" \
+            --title "Zed Nightly Latest" \
+            --notes "该 Release 始终指向最新的 Zed Nightly 构建版本。\n\n当前指向: ${TAG_NAME}" \
+            --latest=false \
+            dist/zed-nightly-linux-x86_64.tar.gz \
+            dist/zed-nightly-linux-x86_64.tar.gz.sha256
+
+          echo "已更新 zed-nightly-latest Release"
