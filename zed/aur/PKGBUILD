@@ -43,8 +43,8 @@ package() {
 
     install -Dm755 "${_srcdir}/zed" "${pkgdir}/usr/bin/zed"
 
-    install -dm755 "${pkgdir}/usr/share/applications"
-    cat > "${pkgdir}/usr/share/applications/zed.desktop" <<DESKTOP
+    install -Dm644 /dev/null "${pkgdir}/usr/share/applications/dev.zed.Zed-Nightly.desktop"
+    cat > "${pkgdir}/usr/share/applications/dev.zed.Zed-Nightly.desktop" <<DESKTOP
 [Desktop Entry]
 Name=Zed Nightly
 Comment=A high-performance, multiplayer code editor (Nightly Build)
@@ -53,11 +53,17 @@ Icon=zed
 Type=Application
 Categories=Development;TextEditor;
 MimeType=text/plain;
-StartupWMClass=dev.zed.Zed-Preview
+StartupWMClass=dev.zed.Zed-Nightly
 Keywords=Text;Editor;
 DESKTOP
 
-    if [ -f "${_srcdir}/zed.png" ]; then
-        install -Dm644 "${_srcdir}/zed.png" "${pkgdir}/usr/share/pixmaps/zed.png"
+    # 按 hicolor 图标主题规范安装图标
+    if [ -f "${_srcdir}/share/icons/hicolor/512x512/apps/zed.png" ]; then
+        install -Dm644 "${_srcdir}/share/icons/hicolor/512x512/apps/zed.png" \
+            "${pkgdir}/usr/share/icons/hicolor/512x512/apps/zed.png"
+    fi
+    if [ -f "${_srcdir}/share/icons/hicolor/1024x1024/apps/zed.png" ]; then
+        install -Dm644 "${_srcdir}/share/icons/hicolor/1024x1024/apps/zed.png" \
+            "${pkgdir}/usr/share/icons/hicolor/1024x1024/apps/zed.png"
     fi
 }

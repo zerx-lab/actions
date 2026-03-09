@@ -162,12 +162,23 @@ jobs:
           TAG_NAME="${{ steps.meta.outputs.tag_name }}"
           ARCHIVE_NAME="zed-nightly-linux-x86_64.tar.gz"
 
+          # Strip 调试符号，大幅减小二进制体积（从 ~500MB 降至 ~100MB）
+          objcopy --strip-debug zed-src/target/release/zed
+
           mkdir -p dist/zed-${PKGVER}
           cp zed-src/target/release/zed dist/zed-${PKGVER}/zed
 
-          # 如果有图标，也一并打包
-          if [ -f "zed-src/assets/icons/logo_96.png" ]; then
-            cp zed-src/assets/icons/logo_96.png dist/zed-${PKGVER}/zed.png
+          # 按 hicolor 图标主题规范打包图标
+          mkdir -p dist/zed-${PKGVER}/share/icons/hicolor/512x512/apps
+          mkdir -p dist/zed-${PKGVER}/share/icons/hicolor/1024x1024/apps
+
+          if [ -f "zed-src/crates/zed/resources/app-icon-nightly.png" ]; then
+            cp zed-src/crates/zed/resources/app-icon-nightly.png \
+              dist/zed-${PKGVER}/share/icons/hicolor/512x512/apps/zed.png
+          fi
+          if [ -f "zed-src/crates/zed/resources/app-icon-nightly@2x.png" ]; then
+            cp "zed-src/crates/zed/resources/app-icon-nightly@2x.png" \
+              dist/zed-${PKGVER}/share/icons/hicolor/1024x1024/apps/zed.png
           fi
 
           cd dist
@@ -178,6 +189,8 @@ jobs:
           echo "sha256=${SHA256}" >> "$GITHUB_OUTPUT"
 
           echo "打包完成: $ARCHIVE_NAME"
+          echo "二进制大小: $(du -sh zed-${PKGVER}/zed | cut -f1)"
+          echo "压缩包大小: $(du -sh ${ARCHIVE_NAME} | cut -f1)"
           echo "SHA256: ${SHA256}"
 
       - name: 删除已有的同名 Tag 和 Release（如果存在）
