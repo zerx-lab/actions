@@ -263,13 +263,269 @@ run_test() {
     echo "  /tmp/zed-nightly.app/bin/zed --version"
 }
 
+# ── makepkg 构建阶段 ──────────────────────────────────────────────────────────
+run_makepkg() {
+    local out_archive="${WORK_DIR}/dist/${ARCHIVE_NAME}"
+    local sha256
+    sha256=$(awk '{print $1}' "${out_archive}.sha256")
+
+    local pkgbuild_dir="${WORK_DIR}/pkgbuild"
+    rm -rf "$pkgbuild_dir"
+    mkdir -p "$pkgbuild_dir"
+
+    # 将 tar.gz 复制到构建目录（makepkg 要求同名源文件在旁边）
+    cp "$out_archive" "${pkgbuild_dir}/${ARCHIVE_NAME}"
+
+    # 获取版本信息
+    local commit_short build_date pkgver
+    commit_short=$(git -C "${ZED_SRC_DIR}" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+    build_date=$(date -u +%Y%m%d)
+    pkgver="0.${build_date}.${commit_short}"
+
+    info "生成本地测试 PKGBUILD（pkgver=${pkgver}）..."
+
+    # 从仓库 PKGBUILD 读取 depends/optdepends，填入版本和本地 sha256
+    cat > "${pkgbuild_dir}/PKGBUILD" << PKGEOF
+# Maintainer: zerx-lab <https://github.com/zerx-lab>
+
+pkgname=zerx-lab-zed-nightly-bin
+pkgver=${pkgver}
+pkgrel=1
+pkgdesc="Zed 编辑器 Nightly 预编译版本（来自 main 分支每日构建）"
+arch=('x86_64')
+url="https://zed.dev"
+license=('GPL-3.0-or-later' 'AGPL-3.0-or-later')
+provides=('zed')
+conflicts=('zed' 'zed-git' 'zed-preview' 'zed-preview-bin')
+depends=(
+    'alsa-lib'
+    'fontconfig'
+    'libgit2'
+    'libxcb'
+    'libxkbcommon-x11'
+    'openssl'
+    'sqlite'
+    'zlib'
+    'libxkbcommon'
+    'wayland'
+    'vulkan-icd-loader'
+)
+optdepends=(
+    'clang: C/C++ language support'
+    'rust: Rust language support'
+)
+source_x86_64=("${ARCHIVE_NAME}")
+sha256sums_x86_64=('${sha256}')
+options=('!strip')
+
+package() {
+    local _appdir="\${srcdir}/zed-nightly.app"
+
+    if [ ! -d "\$_appdir" ]; then
+        echo "错误：找不到解压后的 zed-nightly.app 目录"
+        ls "\${srcdir}"
+        return 1
+    fi
+
+    local _installdir="\${pkgdir}/usr/lib/zed-nightly.app"
+
+    install -dm755 "\${_installdir}/bin"
+    install -dm755 "\${_installdir}/libexec"
+    install -dm755 "\${_installdir}/lib"
+
+    install -Dm755 "\${_appdir}/bin/zed" "\${_installdir}/bin/zed"
+    install -Dm755 "\${_appdir}/libexec/zed-editor" "\${_installdir}/libexec/zed-editor"
+
+    if [ -d "\${_appdir}/lib" ] && [ -n "\$(ls -A "\${_appdir}/lib" 2>/dev/null)" ]; then
+        cp -a "\${_appdir}/lib/." "\${_installdir}/lib/"
+    fi
+
+    install -dm755 "\${pkgdir}/usr/bin"
+    ln -sf "/usr/lib/zed-nightly.app/bin/zed" "\${pkgdir}/usr/bin/zed"
+
+    if [ -f "\${_appdir}/share/icons/hicolor/512x512/apps/zed.png" ]; then
+        install -Dm644 "\${_appdir}/share/icons/hicolor/512x512/apps/zed.png" \
+            "\${pkgdir}/usr/share/icons/hicolor/512x512/apps/zed.png"
+    fi
+    if [ -f "\${_appdir}/share/icons/hicolor/1024x1024/apps/zed.png" ]; then
+        install -Dm644 "\${_appdir}/share/icons/hicolor/1024x1024/apps/zed.png" \
+            "\${pkgdir}/usr/share/icons/hicolor/1024x1024/apps/zed.png"
+    fi
+
+    if [ -f "\${_appdir}/share/applications/dev.zed.Zed-Nightly.desktop" ]; then
+        install -Dm644 "\${_appdir}/share/applications/dev.zed.Zed-Nightly.desktop" \
+            "\${pkgdir}/usr/share/applications/dev.zed.Zed-Nightly.desktop"
+    fi
+}
+PKGEOF
+
+    echo ""
+    info "运行 makepkg --noconfirm --nodeps ..."
+    (cd "$pkgbuild_dir" && makepkg --noconfirm --nodeps 2>&1)
+
+    local pkg_file
+    pkg_file=$(ls "${pkgbuild_dir}"/*.pkg.tar.zst 2>/dev/null | head -1)
+    if [ -z "$pkg_file" ]; then
+        error "makepkg 未生成 .pkg.tar.zst 文件"
+        return 1
+    fi
+
+    local pkg_size
+    pkg_size=$(du -sh "$pkg_file" | cut -f1)
+    success "makepkg 构建成功: $(basename "$pkg_file") (${pkg_size})"
+
+    echo ""
+    info "包内文件列表（关键条目）:"
+    tar --use-compress-program=zstd -tvf "$pkg_file" 2>/dev/null \
+        | grep -v '^\(drw\)' \
+        | awk '{print $NF}' \
+        | sort \
+        | sed 's/^/    /'
+
+    echo ""
+    echo "════════════════════════════════════════════════"
+    echo -e "${GREEN}makepkg 阶段完成${NC}"
+    echo "  包文件 : $(basename "$pkg_file")"
+    echo "  大小   : ${pkg_size}"
+    echo "  路径   : ${pkg_file}"
+    echo "════════════════════════════════════════════════"
+    echo ""
+    echo "安装命令（需要 sudo）："
+    echo "  sudo pacman -U --noconfirm ${pkg_file}"
+}
+
+# ── pacman 安装验证阶段 ───────────────────────────────────────────────────────
+run_install_verify() {
+    local pkgbuild_dir="${WORK_DIR}/pkgbuild"
+    local pkg_file
+    pkg_file=$(ls "${pkgbuild_dir}"/*.pkg.tar.zst 2>/dev/null | head -1)
+
+    if [ -z "$pkg_file" ]; then
+        error "找不到 .pkg.tar.zst，请先运行 makepkg 阶段"
+        return 1
+    fi
+
+    echo ""
+    info "用 sudo pacman -U 安装包..."
+    sudo pacman -U --noconfirm "$pkg_file" 2>&1
+
+    echo ""
+    info "安装后验证..."
+    local failed=0
+
+    # 1. which zed
+    if which zed &>/dev/null; then
+        success "which zed -> $(which zed)"
+    else
+        error "which zed 失败"; failed=1
+    fi
+
+    # 2. zed --version
+    local ver_out
+    ver_out=$(zed --version 2>&1)
+    if echo "$ver_out" | grep -q 'nightly'; then
+        success "zed --version -> ${ver_out}"
+    else
+        error "zed --version 输出不符预期: ${ver_out}"; failed=1
+    fi
+
+    # 3. 软链正确
+    local link_target
+    link_target=$(readlink /usr/bin/zed 2>/dev/null || echo "")
+    if [ "$link_target" = "/usr/lib/zed-nightly.app/bin/zed" ]; then
+        success "软链正确: /usr/bin/zed -> ${link_target}"
+    else
+        error "软链异常: /usr/bin/zed -> ${link_target}"; failed=1
+    fi
+
+    # 4. rpath
+    local rpath
+    rpath=$(readelf -d /usr/lib/zed-nightly.app/bin/zed 2>/dev/null \
+        | grep -E 'RPATH|RUNPATH' | awk '{print $NF}' || true)
+    if echo "$rpath" | grep -q 'ORIGIN'; then
+        success "rpath 正确: ${rpath}"
+    else
+        error "rpath 异常: ${rpath:-空}"; failed=1
+    fi
+
+    # 5. desktop 文件
+    if [ -f /usr/share/applications/dev.zed.Zed-Nightly.desktop ]; then
+        success "desktop 文件存在: /usr/share/applications/dev.zed.Zed-Nightly.desktop"
+    else
+        error "desktop 文件缺失"; failed=1
+    fi
+
+    # 6. 图标
+    if [ -f /usr/share/icons/hicolor/512x512/apps/zed.png ] && \
+       [ -f /usr/share/icons/hicolor/1024x1024/apps/zed.png ]; then
+        success "图标文件存在（512x512 + 1024x1024）"
+    else
+        error "图标文件缺失"; failed=1
+    fi
+
+    # 7. ldd 无缺失库
+    local missing_libs
+    missing_libs=$(ldd /usr/lib/zed-nightly.app/bin/zed 2>&1 | grep 'not found' || true)
+    if [ -z "$missing_libs" ]; then
+        success "ldd 无缺失共享库"
+    else
+        error "ldd 检测到缺失库:\n${missing_libs}"; failed=1
+    fi
+
+    # 8. pacman -Qi
+    echo ""
+    info "pacman -Qi 输出："
+    pacman -Qi zerx-lab-zed-nightly-bin 2>&1 | sed 's/^/    /'
+
+    echo ""
+    echo "════════════════════════════════════════════════"
+    if [ "$failed" -eq 0 ]; then
+        echo -e "${GREEN}pacman 安装验证：全部通过 ✓${NC}"
+    else
+        echo -e "${RED}pacman 安装验证：存在失败项，请检查上方输出${NC}"
+    fi
+    echo "════════════════════════════════════════════════"
+}
+
 # ── 入口 ──────────────────────────────────────────────────────────────────────
+# 支持按阶段运行：
+#   bash test-local-package.sh [ZED_SRC_DIR] [阶段]
+# 阶段可选值：
+#   all      （默认）运行全部：打包 + makepkg + 安装验证
+#   package  只运行打包阶段
+#   makepkg  只运行 makepkg 阶段（需先跑过 package）
+#   install  只运行安装验证阶段（需先跑过 makepkg）
+STAGE="${2:-all}"
+
 echo "════════════════════════════════════════════════"
-echo " Zed Nightly 本地打包测试"
-echo " Zed 源码目录: ${ZED_SRC_DIR}"
+echo " Zed Nightly 本地打包全流程测试"
+echo " Zed 源码目录 : ${ZED_SRC_DIR}"
+echo " 执行阶段     : ${STAGE}"
 echo "════════════════════════════════════════════════"
 echo ""
 
 check_deps
 check_zed_build
-run_test
+
+case "$STAGE" in
+    package)
+        run_test
+        ;;
+    makepkg)
+        run_makepkg
+        ;;
+    install)
+        run_install_verify
+        ;;
+    all)
+        run_test
+        echo ""
+        run_makepkg
+        echo ""
+        run_install_verify
+        ;;
+    *)
+        error "未知阶段: ${STAGE}，可选值: all / package / makepkg / install"
+        exit 1
+        ;;
+esac

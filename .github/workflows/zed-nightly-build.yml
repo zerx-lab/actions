@@ -219,6 +219,13 @@ jobs:
           APP_ID="dev.zed.Zed-Nightly"
           envsubst < "crates/zed/resources/zed.desktop.in" \
             > "${ZED_APP}/share/applications/${APP_ID}.desktop"
+
+          # 追加 StartupWMClass，与 zed-editor 运行时设置的 app_id 一致
+          # （release_channel::ReleaseChannel::app_id() 返回 "dev.zed.Zed-Nightly"）
+          # KDE/GNOME 通过此字段将启动动画与实际窗口匹配，
+          # 否则 cli exec 到 zed-editor 后桌面环境无法关联，显示终端图标
+          echo "StartupWMClass=${APP_ID}" >> "${ZED_APP}/share/applications/${APP_ID}.desktop"
+
           chmod +x "${ZED_APP}/share/applications/${APP_ID}.desktop"
           echo "desktop 文件内容："
           cat "${ZED_APP}/share/applications/${APP_ID}.desktop"

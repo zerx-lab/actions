@@ -1,0 +1,10 @@
+# Zed 源码（本地拉取用于测试，不上传）
+zed/src/
+
+# 构建产物
+zed/build/
+*.pkg.tar.zst
+*.pkg.tar.xz
+
+# 测试临时目录
+zed/test-output/

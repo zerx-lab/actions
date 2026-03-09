@@ -101,5 +101,11 @@ package() {
         # TryExec：同样改为绝对路径，避免依赖 PATH
         sed -i "s|TryExec=zed|TryExec=${_app_prefix}/bin/zed|g" \
             "${_desktop_dst}"
+
+        # StartupWMClass：与 zed-editor 运行时通过 release_channel::app_id()
+        # 设置的 Wayland app_id / X11 WM_CLASS 一致（"dev.zed.Zed-Nightly"）
+        # KDE/GNOME 用此字段将启动动画与实际窗口关联，
+        # 否则 cli exec 到 zed-editor 后桌面无法匹配，显示终端图标而非 Zed 图标
+        echo "StartupWMClass=dev.zed.Zed-Nightly" >> "${_desktop_dst}"
     fi
 }
