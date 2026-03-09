@@ -121,26 +121,38 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libssl-dev \
+            build-essential \
+            gcc \
+            g++ \
+            cmake \
+            clang \
+            mold \
             pkg-config \
-            libfontconfig1-dev \
-            libxcb-shape0-dev \
-            libxcb-xfixes0-dev \
-            libxkbcommon-dev \
-            libxkbcommon-x11-dev \
+            libglib2.0-dev \
+            libssl-dev \
+            libfontconfig-dev \
             libgit2-dev \
             libsqlite3-dev \
             libzstd-dev \
             libasound2-dev \
+            libva-dev \
+            libvulkan1 \
             libwayland-dev \
-            wayland-protocols \
+            libx11-xcb-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
             libx11-dev \
             libxrandr-dev \
             libxcursor-dev \
             libxi-dev \
-            libxext-dev \
-            clang \
-            mold
+            libxext-dev
+
+      - name: 设置 Release Channel 为 nightly
+        run: |
+          echo -n "nightly" > zed-src/crates/zed/RELEASE_CHANNEL
+          echo "RELEASE_CHANNEL 已设置为: $(cat zed-src/crates/zed/RELEASE_CHANNEL)"
 
       - name: 编译 Zed
         working-directory: zed-src
