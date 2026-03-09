@@ -181,6 +181,40 @@ jobs:
           git -C zed-src tag -d "$TAG_NAME" 2>/dev/null || true
           gh api -X DELETE "repos/${{ github.repository }}/git/refs/tags/$TAG_NAME" 2>/dev/null || true
 
+      - name: 生成 Release Notes
+        id: notes
+        run: |
+          TAG_NAME="${{ steps.meta.outputs.tag_name }}"
+          PKGVER="${{ steps.meta.outputs.pkgver }}"
+          COMMIT_SHA="${{ steps.resolve.outputs.commit_sha }}"
+          COMMIT_SHORT="${{ steps.resolve.outputs.commit_short }}"
+          BUILD_DATE="${{ steps.resolve.outputs.build_date }}"
+          NOTES_FILE="/tmp/release-notes.md"
+
+          printf '## Zed Nightly 构建\n\n' > "$NOTES_FILE"
+          printf '**构建日期**: %s\n' "$BUILD_DATE" >> "$NOTES_FILE"
+          printf '**上游 Commit**: [%s](https://github.com/zed-industries/zed/commit/%s)\n' \
+            "$COMMIT_SHORT" "$COMMIT_SHA" >> "$NOTES_FILE"
+          printf '**版本号**: %s\n\n' "$PKGVER" >> "$NOTES_FILE"
+          printf '### 安装方法\n\n' >> "$NOTES_FILE"
+          printf '**直接下载**:\n' >> "$NOTES_FILE"
+          printf '```bash\n' >> "$NOTES_FILE"
+          printf 'curl -L https://github.com/zerx-lab/actions/releases/download/%s/zed-nightly-linux-x86_64.tar.gz | tar -xz\n' \
+            "$TAG_NAME" >> "$NOTES_FILE"
+          printf 'sudo install -Dm755 zed-*/zed /usr/local/bin/zed\n' >> "$NOTES_FILE"
+          printf '```\n\n' >> "$NOTES_FILE"
+          printf '**通过 AUR（推荐）**:\n' >> "$NOTES_FILE"
+          printf '```bash\n' >> "$NOTES_FILE"
+          printf 'yay -S zerx-lab-zed-nightly-bin\n' >> "$NOTES_FILE"
+          printf '```\n\n' >> "$NOTES_FILE"
+          printf '### 文件\n' >> "$NOTES_FILE"
+          printf '- `zed-nightly-linux-x86_64.tar.gz`: x86_64 Linux 预编译二进制\n' >> "$NOTES_FILE"
+          printf '- `zed-nightly-linux-x86_64.tar.gz.sha256`: SHA256 校验文件\n' >> "$NOTES_FILE"
+
+          echo "notes_file=$NOTES_FILE" >> "$GITHUB_OUTPUT"
+          echo "Release Notes 已生成："
+          cat "$NOTES_FILE"
+
       - name: 发布到 GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -190,35 +224,10 @@ jobs:
           COMMIT_SHA="${{ steps.resolve.outputs.commit_sha }}"
           BUILD_DATE="${{ steps.resolve.outputs.build_date }}"
 
-          cat > /tmp/release-notes.md << NOTES
-## Zed Nightly 构建
-
-**构建日期**: ${BUILD_DATE}
-**上游 Commit**: [`${COMMIT_SHA:0:7}`](https://github.com/zed-industries/zed/commit/${COMMIT_SHA})
-**版本号**: ${PKGVER}
-
-### 安装方法
-
-**直接下载**：
-```bash
-curl -L https://github.com/zerx-lab/actions/releases/download/${TAG_NAME}/zed-nightly-linux-x86_64.tar.gz | tar -xz
-sudo install -Dm755 zed-*/zed /usr/local/bin/zed
-```
-
-**通过 AUR（推荐）**：
-```bash
-yay -S zerx-lab-zed-nightly-bin
-```
-
-### 文件
-- `zed-nightly-linux-x86_64.tar.gz`：x86_64 Linux 预编译二进制
-- `zed-nightly-linux-x86_64.tar.gz.sha256`：SHA256 校验文件
-NOTES
-
           gh release create "$TAG_NAME" \
             --repo "${{ github.repository }}" \
             --title "Zed Nightly ${BUILD_DATE} (${COMMIT_SHA:0:7})" \
-            --notes-file /tmp/release-notes.md \
+            --notes-file "${{ steps.notes.outputs.notes_file }}" \
             --latest=false \
             dist/zed-nightly-linux-x86_64.tar.gz \
             dist/zed-nightly-linux-x86_64.tar.gz.sha256
