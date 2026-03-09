@@ -46,6 +46,9 @@ jobs:
     name: 编译 Zed
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_TERM_COLOR: always
     outputs:
       pkgver: ${{ steps.meta.outputs.pkgver }}
       tag_name: ${{ steps.meta.outputs.tag_name }}
@@ -105,17 +108,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-
-      - name: 缓存 Rust 编译产物
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            zed-src/target
-          key: ${{ runner.os }}-cargo-zed-${{ hashFiles('zed-src/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-zed-
 
       - name: 安装系统依赖
         run: |
