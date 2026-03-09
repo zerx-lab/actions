@@ -217,8 +217,8 @@ jobs:
           printf 'yay -S zerx-lab-zed-nightly-bin\n' >> "$NOTES_FILE"
           printf '```\n\n' >> "$NOTES_FILE"
           printf '### 文件\n' >> "$NOTES_FILE"
-          printf '- `zed-nightly-linux-x86_64.tar.gz`: x86_64 Linux 预编译二进制\n' >> "$NOTES_FILE"
-          printf '- `zed-nightly-linux-x86_64.tar.gz.sha256`: SHA256 校验文件\n' >> "$NOTES_FILE"
+          echo '- `zed-nightly-linux-x86_64.tar.gz`: x86_64 Linux 预编译二进制' >> "$NOTES_FILE"
+          echo '- `zed-nightly-linux-x86_64.tar.gz.sha256`: SHA256 校验文件' >> "$NOTES_FILE"
 
           echo "notes_file=$NOTES_FILE" >> "$GITHUB_OUTPUT"
           echo "Release Notes 已生成："
