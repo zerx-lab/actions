@@ -122,6 +122,7 @@ jobs:
             cmake \
             clang \
             mold \
+            gettext \
             pkg-config \
             libglib2.0-dev \
             libssl-dev \
@@ -149,49 +150,93 @@ jobs:
           echo -n "nightly" > zed-src/crates/zed/RELEASE_CHANNEL
           echo "RELEASE_CHANNEL 已设置为: $(cat zed-src/crates/zed/RELEASE_CHANNEL)"
 
-      - name: 编译 Zed
+      - name: 编译 Zed（zed + cli）
         working-directory: zed-src
         run: |
-          export RUSTFLAGS="-C link-arg=-fuse-ld=mold"
-          cargo build --release --package zed
+          # 与官方 bundle-linux 保持一致：同时编译 zed 和 cli 两个 package
+          # cli 是负责启动编辑器的 wrapper，安装后作为 bin/zed 供用户调用
+          export RUSTFLAGS="-C link-arg=-fuse-ld=mold -C link-args=-Wl,--disable-new-dtags,-rpath,\$ORIGIN/../lib"
+          cargo build --release --package zed --package cli
 
-      - name: 打包二进制文件
+      - name: 打包（对齐官方 bundle-linux 结构）
         id: package
+        working-directory: zed-src
         run: |
           PKGVER="${{ steps.meta.outputs.pkgver }}"
-          TAG_NAME="${{ steps.meta.outputs.tag_name }}"
           ARCHIVE_NAME="zed-nightly-linux-x86_64.tar.gz"
+          TARGET_DIR="target"
+          TARGET_TRIPLE="x86_64-unknown-linux-gnu"
 
-          # Strip 调试符号，大幅减小二进制体积（从 ~500MB 降至 ~100MB）
-          objcopy --strip-debug zed-src/target/release/zed
+          # ── 1. Strip 调试符号（与官方一致用 objcopy --strip-debug）────────
+          echo "==> Strip 调试符号..."
+          SIZE_BEFORE=$(du -sh "${TARGET_DIR}/release/zed" | cut -f1)
+          objcopy --strip-debug "${TARGET_DIR}/release/zed"
+          objcopy --strip-debug "${TARGET_DIR}/release/cli"
+          SIZE_AFTER=$(du -sh "${TARGET_DIR}/release/zed" | cut -f1)
+          echo "zed 大小: ${SIZE_BEFORE} -> ${SIZE_AFTER}"
 
-          mkdir -p dist/zed-${PKGVER}
-          cp zed-src/target/release/zed dist/zed-${PKGVER}/zed
+          # ── 2. 构建 .app 目录结构（与官方完全一致）──────────────────────
+          echo "==> 构建 zed-nightly.app 目录结构..."
+          STAGE_DIR=$(mktemp -d)
+          ZED_APP="${STAGE_DIR}/zed-nightly.app"
 
-          # 按 hicolor 图标主题规范打包图标
-          mkdir -p dist/zed-${PKGVER}/share/icons/hicolor/512x512/apps
-          mkdir -p dist/zed-${PKGVER}/share/icons/hicolor/1024x1024/apps
+          mkdir -p "${ZED_APP}/bin"
+          mkdir -p "${ZED_APP}/libexec"
+          mkdir -p "${ZED_APP}/lib"
+          mkdir -p "${ZED_APP}/share/icons/hicolor/512x512/apps"
+          mkdir -p "${ZED_APP}/share/icons/hicolor/1024x1024/apps"
+          mkdir -p "${ZED_APP}/share/applications"
 
-          if [ -f "zed-src/crates/zed/resources/app-icon-nightly.png" ]; then
-            cp zed-src/crates/zed/resources/app-icon-nightly.png \
-              dist/zed-${PKGVER}/share/icons/hicolor/512x512/apps/zed.png
-          fi
-          if [ -f "zed-src/crates/zed/resources/app-icon-nightly@2x.png" ]; then
-            cp "zed-src/crates/zed/resources/app-icon-nightly@2x.png" \
-              dist/zed-${PKGVER}/share/icons/hicolor/1024x1024/apps/zed.png
-          fi
+          # 二进制：zed-editor 是真正的编辑器，cli 是用户调用的 wrapper
+          cp "${TARGET_DIR}/release/zed" "${ZED_APP}/libexec/zed-editor"
+          cp "${TARGET_DIR}/release/cli" "${ZED_APP}/bin/zed"
 
-          cd dist
-          tar -czf "${ARCHIVE_NAME}" zed-${PKGVER}/
-          sha256sum "${ARCHIVE_NAME}" > "${ARCHIVE_NAME}.sha256"
+          # ── 3. 打包运行时共享库（排除系统基础库，与官方一致）────────────
+          echo "==> 收集运行时共享库..."
+          ldd "${TARGET_DIR}/release/zed" \
+            | awk '{print $3}' \
+            | grep -v '^\(not\|linux-vdso\)' \
+            | grep -v '\<\(libstdc++\.so\|libc\.so\|libgcc_s\.so\|libm\.so\|libpthread\.so\|libdl\.so\|libasound\.so\)\>' \
+            | grep -v '^$' \
+            | sort -u \
+            | xargs -I{} cp {} "${ZED_APP}/lib/" 2>/dev/null || true
+          echo "收集到 $(ls "${ZED_APP}/lib/" | wc -l) 个共享库"
 
-          SHA256=$(awk '{print $1}' "${ARCHIVE_NAME}.sha256")
+          # ── 4. 图标（nightly 专属图标）────────────────────────────────────
+          echo "==> 复制图标..."
+          cp "crates/zed/resources/app-icon-nightly.png" \
+            "${ZED_APP}/share/icons/hicolor/512x512/apps/zed.png"
+          cp "crates/zed/resources/app-icon-nightly@2x.png" \
+            "${ZED_APP}/share/icons/hicolor/1024x1024/apps/zed.png"
+
+          # ── 5. 从官方模板生成 desktop 文件（与官方完全一致）──────────────
+          echo "==> 生成 desktop 文件..."
+          export APP_NAME="Zed Nightly"
+          export APP_CLI="zed"
+          export APP_ICON="zed"
+          export APP_ARGS="%U"
+          export DO_STARTUP_NOTIFY="true"
+          APP_ID="dev.zed.Zed-Nightly"
+          envsubst < "crates/zed/resources/zed.desktop.in" \
+            > "${ZED_APP}/share/applications/${APP_ID}.desktop"
+          chmod +x "${ZED_APP}/share/applications/${APP_ID}.desktop"
+          echo "desktop 文件内容："
+          cat "${ZED_APP}/share/applications/${APP_ID}.desktop"
+
+          # ── 6. 打包为 tar.gz ──────────────────────────────────────────────
+          echo "==> 打包..."
+          mkdir -p "../dist"
+          tar -czvf "../dist/${ARCHIVE_NAME}" -C "${STAGE_DIR}" "zed-nightly.app"
+          sha256sum "../dist/${ARCHIVE_NAME}" > "../dist/${ARCHIVE_NAME}.sha256"
+
+          SHA256=$(awk '{print $1}' "../dist/${ARCHIVE_NAME}.sha256")
           echo "sha256=${SHA256}" >> "$GITHUB_OUTPUT"
 
-          echo "打包完成: $ARCHIVE_NAME"
-          echo "二进制大小: $(du -sh zed-${PKGVER}/zed | cut -f1)"
-          echo "压缩包大小: $(du -sh ${ARCHIVE_NAME} | cut -f1)"
+          echo "==> 打包完成"
+          echo "压缩包大小: $(du -sh "../dist/${ARCHIVE_NAME}" | cut -f1)"
           echo "SHA256: ${SHA256}"
+          echo "包内结构:"
+          tar -tzvf "../dist/${ARCHIVE_NAME}"
 
       - name: 删除已有的同名 Tag 和 Release（如果存在）
         env:
@@ -199,11 +244,7 @@ jobs:
         run: |
           TAG_NAME="${{ steps.meta.outputs.tag_name }}"
 
-          # 尝试删除已有 release
           gh release delete "$TAG_NAME" --repo "${{ github.repository }}" --yes 2>/dev/null || true
-
-          # 尝试删除已有 tag
-          git -C zed-src tag -d "$TAG_NAME" 2>/dev/null || true
           gh api -X DELETE "repos/${{ github.repository }}/git/refs/tags/$TAG_NAME" 2>/dev/null || true
 
       - name: 生成 Release Notes
@@ -216,28 +257,47 @@ jobs:
           BUILD_DATE="${{ steps.resolve.outputs.build_date }}"
           NOTES_FILE="/tmp/release-notes.md"
 
-          printf '## Zed Nightly 构建\n\n' > "$NOTES_FILE"
-          printf '**构建日期**: %s\n' "$BUILD_DATE" >> "$NOTES_FILE"
-          printf '**上游 Commit**: [%s](https://github.com/zed-industries/zed/commit/%s)\n' \
-            "$COMMIT_SHORT" "$COMMIT_SHA" >> "$NOTES_FILE"
-          printf '**版本号**: %s\n\n' "$PKGVER" >> "$NOTES_FILE"
-          printf '### 安装方法\n\n' >> "$NOTES_FILE"
-          printf '**直接下载**:\n' >> "$NOTES_FILE"
-          printf '```bash\n' >> "$NOTES_FILE"
-          printf 'curl -L https://github.com/zerx-lab/actions/releases/download/%s/zed-nightly-linux-x86_64.tar.gz | tar -xz\n' \
-            "$TAG_NAME" >> "$NOTES_FILE"
-          printf 'sudo install -Dm755 zed-*/zed /usr/local/bin/zed\n' >> "$NOTES_FILE"
-          printf '```\n\n' >> "$NOTES_FILE"
-          printf '**通过 AUR（推荐）**:\n' >> "$NOTES_FILE"
-          printf '```bash\n' >> "$NOTES_FILE"
-          printf 'yay -S zerx-lab-zed-nightly-bin\n' >> "$NOTES_FILE"
-          printf '```\n\n' >> "$NOTES_FILE"
-          printf '### 文件\n' >> "$NOTES_FILE"
-          echo '- `zed-nightly-linux-x86_64.tar.gz`: x86_64 Linux 预编译二进制' >> "$NOTES_FILE"
-          echo '- `zed-nightly-linux-x86_64.tar.gz.sha256`: SHA256 校验文件' >> "$NOTES_FILE"
+          cat > "$NOTES_FILE" <<EOF
+          ## Zed Nightly 构建
+
+          **构建日期**: ${BUILD_DATE}
+          **上游 Commit**: [${COMMIT_SHORT}](https://github.com/zed-industries/zed/commit/${COMMIT_SHA})
+          **版本号**: ${PKGVER}
+
+          ### 包结构
+
+          与官方发布包一致，解压后为 \`zed-nightly.app/\` 目录：
+          - \`bin/zed\` — CLI wrapper，用户直接调用的入口
+          - \`libexec/zed-editor\` — 真正的编辑器二进制
+          - \`lib/\` — 运行时共享库
+          - \`share/icons/hicolor/\` — 应用图标
+          - \`share/applications/dev.zed.Zed-Nightly.desktop\` — 桌面快捷方式
+
+          ### 安装方法
+
+          **通过官方 install.sh（推荐）**：
+          \`\`\`bash
+          ZED_CHANNEL=nightly ZED_BUNDLE_PATH=/path/to/zed-nightly-linux-x86_64.tar.gz sh <(curl -fsSL https://zed.dev/install.sh)
+          \`\`\`
+
+          **手动安装**：
+          \`\`\`bash
+          tar -xzf zed-nightly-linux-x86_64.tar.gz -C ~/.local/
+          ln -sf ~/.local/zed-nightly.app/bin/zed ~/.local/bin/zed
+          \`\`\`
+
+          **通过 AUR**：
+          \`\`\`bash
+          yay -S zerx-lab-zed-nightly-bin
+          \`\`\`
+
+          ### 文件
+
+          - \`zed-nightly-linux-x86_64.tar.gz\`: x86_64 Linux 预编译包
+          - \`zed-nightly-linux-x86_64.tar.gz.sha256\`: SHA256 校验文件
+          EOF
 
           echo "notes_file=$NOTES_FILE" >> "$GITHUB_OUTPUT"
-          echo "Release Notes 已生成："
           cat "$NOTES_FILE"
 
       - name: 发布到 GitHub Release
@@ -245,9 +305,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG_NAME="${{ steps.meta.outputs.tag_name }}"
-          PKGVER="${{ steps.meta.outputs.pkgver }}"
-          COMMIT_SHA="${{ steps.resolve.outputs.commit_sha }}"
           BUILD_DATE="${{ steps.resolve.outputs.build_date }}"
+          COMMIT_SHA="${{ steps.resolve.outputs.commit_sha }}"
 
           gh release create "$TAG_NAME" \
             --repo "${{ github.repository }}" \
@@ -265,7 +324,6 @@ jobs:
         run: |
           TAG_NAME="${{ steps.meta.outputs.tag_name }}"
 
-          # 删除旧的 zed-nightly-latest release（如果存在）
           gh release delete "zed-nightly-latest" \
             --repo "${{ github.repository }}" \
             --yes 2>/dev/null || true
@@ -274,11 +332,10 @@ jobs:
             "repos/${{ github.repository }}/git/refs/tags/zed-nightly-latest" \
             2>/dev/null || true
 
-          # 创建新的 latest release（供 PKGBUILD 中固定 URL 使用）
           gh release create "zed-nightly-latest" \
             --repo "${{ github.repository }}" \
             --title "Zed Nightly Latest" \
-            --notes "该 Release 始终指向最新的 Zed Nightly 构建版本。\n\n当前指向: ${TAG_NAME}" \
+            --notes "该 Release 始终指向最新的 Zed Nightly 构建版本。当前指向: ${TAG_NAME}" \
             --latest=false \
             dist/zed-nightly-linux-x86_64.tar.gz \
             dist/zed-nightly-linux-x86_64.tar.gz.sha256

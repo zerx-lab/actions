@@ -31,39 +31,53 @@ sha256sums_x86_64=('SKIP')
 options=('!strip')
 
 package() {
-    # 解压后目录格式为 zed-<pkgver>/
-    local _srcdir
-    _srcdir=$(find "${srcdir}" -maxdepth 1 -type d -name 'zed-*' | head -1)
+    # 解压后目录为 zed-nightly.app/（与官方 bundle-linux 结构一致）
+    local _appdir="${srcdir}/zed-nightly.app"
 
-    if [ -z "$_srcdir" ]; then
-        echo "错误：找不到解压后的 zed-* 目录"
+    if [ ! -d "$_appdir" ]; then
+        echo "错误：找不到解压后的 zed-nightly.app 目录"
         ls "${srcdir}"
         return 1
     fi
 
-    install -Dm755 "${_srcdir}/zed" "${pkgdir}/usr/bin/zed"
+    # ── 保持完整 .app 目录结构 ──────────────────────────────────────────────
+    # cli（bin/zed）通过 rpath $ORIGIN/../lib 查找共享库，
+    # 通过相对路径 ../libexec/zed-editor 调用编辑器主进程，
+    # 必须保持整个目录结构完整，不能分散安装。
+    local _installdir="${pkgdir}/usr/lib/zed-nightly.app"
 
-    install -Dm644 /dev/null "${pkgdir}/usr/share/applications/dev.zed.Zed-Nightly.desktop"
-    cat > "${pkgdir}/usr/share/applications/dev.zed.Zed-Nightly.desktop" <<DESKTOP
-[Desktop Entry]
-Name=Zed Nightly
-Comment=A high-performance, multiplayer code editor (Nightly Build)
-Exec=zed %F
-Icon=zed
-Type=Application
-Categories=Development;TextEditor;
-MimeType=text/plain;
-StartupWMClass=dev.zed.Zed-Nightly
-Keywords=Text;Editor;
-DESKTOP
+    install -dm755 "${_installdir}/bin"
+    install -dm755 "${_installdir}/libexec"
+    install -dm755 "${_installdir}/lib"
 
-    # 按 hicolor 图标主题规范安装图标
-    if [ -f "${_srcdir}/share/icons/hicolor/512x512/apps/zed.png" ]; then
-        install -Dm644 "${_srcdir}/share/icons/hicolor/512x512/apps/zed.png" \
+    # cli wrapper：用户直接调用的入口
+    install -Dm755 "${_appdir}/bin/zed" "${_installdir}/bin/zed"
+
+    # 真正的编辑器二进制
+    install -Dm755 "${_appdir}/libexec/zed-editor" "${_installdir}/libexec/zed-editor"
+
+    # 运行时共享库（由 rpath $ORIGIN/../lib 加载）
+    if [ -d "${_appdir}/lib" ] && [ -n "$(ls -A "${_appdir}/lib" 2>/dev/null)" ]; then
+        cp -a "${_appdir}/lib/." "${_installdir}/lib/"
+    fi
+
+    # ── /usr/bin/zed 软链到 cli wrapper ────────────────────────────────────
+    install -dm755 "${pkgdir}/usr/bin"
+    ln -sf "/usr/lib/zed-nightly.app/bin/zed" "${pkgdir}/usr/bin/zed"
+
+    # ── 图标（hicolor 主题规范）────────────────────────────────────────────
+    if [ -f "${_appdir}/share/icons/hicolor/512x512/apps/zed.png" ]; then
+        install -Dm644 "${_appdir}/share/icons/hicolor/512x512/apps/zed.png" \
             "${pkgdir}/usr/share/icons/hicolor/512x512/apps/zed.png"
     fi
-    if [ -f "${_srcdir}/share/icons/hicolor/1024x1024/apps/zed.png" ]; then
-        install -Dm644 "${_srcdir}/share/icons/hicolor/1024x1024/apps/zed.png" \
+    if [ -f "${_appdir}/share/icons/hicolor/1024x1024/apps/zed.png" ]; then
+        install -Dm644 "${_appdir}/share/icons/hicolor/1024x1024/apps/zed.png" \
             "${pkgdir}/usr/share/icons/hicolor/1024x1024/apps/zed.png"
+    fi
+
+    # ── desktop 文件（从包内直接安装，由官方模板 envsubst 生成）──────────
+    if [ -f "${_appdir}/share/applications/dev.zed.Zed-Nightly.desktop" ]; then
+        install -Dm644 "${_appdir}/share/applications/dev.zed.Zed-Nightly.desktop" \
+            "${pkgdir}/usr/share/applications/dev.zed.Zed-Nightly.desktop"
     fi
 }
