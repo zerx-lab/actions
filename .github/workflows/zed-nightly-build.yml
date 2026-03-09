@@ -190,32 +190,35 @@ jobs:
           COMMIT_SHA="${{ steps.resolve.outputs.commit_sha }}"
           BUILD_DATE="${{ steps.resolve.outputs.build_date }}"
 
-          gh release create "$TAG_NAME" \
-            --repo "${{ github.repository }}" \
-            --title "Zed Nightly ${BUILD_DATE} (${COMMIT_SHA:0:7})" \
-            --notes "## Zed Nightly 构建
+          cat > /tmp/release-notes.md << NOTES
+## Zed Nightly 构建
 
 **构建日期**: ${BUILD_DATE}
-**上游 Commit**: [\`${COMMIT_SHA:0:7}\`](https://github.com/zed-industries/zed/commit/${COMMIT_SHA})
+**上游 Commit**: [`${COMMIT_SHA:0:7}`](https://github.com/zed-industries/zed/commit/${COMMIT_SHA})
 **版本号**: ${PKGVER}
 
 ### 安装方法
 
 **直接下载**：
-\`\`\`bash
-curl -L https://github.com/${{ github.repository }}/releases/download/${TAG_NAME}/zed-nightly-linux-x86_64.tar.gz | tar -xz
+```bash
+curl -L https://github.com/zerx-lab/actions/releases/download/${TAG_NAME}/zed-nightly-linux-x86_64.tar.gz | tar -xz
 sudo install -Dm755 zed-*/zed /usr/local/bin/zed
-\`\`\`
+```
 
 **通过 AUR（推荐）**：
-\`\`\`bash
+```bash
 yay -S zerx-lab-zed-nightly-bin
-\`\`\`
+```
 
 ### 文件
-- \`zed-nightly-linux-x86_64.tar.gz\`：x86_64 Linux 预编译二进制
-- \`zed-nightly-linux-x86_64.tar.gz.sha256\`：SHA256 校验文件
-" \
+- `zed-nightly-linux-x86_64.tar.gz`：x86_64 Linux 预编译二进制
+- `zed-nightly-linux-x86_64.tar.gz.sha256`：SHA256 校验文件
+NOTES
+
+          gh release create "$TAG_NAME" \
+            --repo "${{ github.repository }}" \
+            --title "Zed Nightly ${BUILD_DATE} (${COMMIT_SHA:0:7})" \
+            --notes-file /tmp/release-notes.md \
             --latest=false \
             dist/zed-nightly-linux-x86_64.tar.gz \
             dist/zed-nightly-linux-x86_64.tar.gz.sha256
