@@ -67,13 +67,34 @@ jobs:
           echo "SHA256: $SHA256"
           echo "value=$SHA256" >> "$GITHUB_OUTPUT"
 
+      - name: 确定 pkgrel
+        id: pkgrel
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          AUR_INFO=$(curl -s "https://aur.archlinux.org/rpc/v5/info?arg[]=zerx-lab-fluxdown-bin")
+          AUR_VERSION=$(echo "$AUR_INFO" | jq -r '.results[0].Version // empty')
+          AUR_PKGVER=$(echo "$AUR_VERSION" | cut -d'-' -f1)
+          AUR_PKGREL=$(echo "$AUR_VERSION" | cut -d'-' -f2)
+
+          echo "AUR 当前版本: ${AUR_VERSION:-（未发布）}"
+
+          if [ "$VERSION" = "$AUR_PKGVER" ]; then
+            PKGREL=$((AUR_PKGREL + 1))
+            echo "同版本号，递增 pkgrel: $AUR_PKGREL -> $PKGREL"
+          else
+            PKGREL=1
+            echo "新版本号，pkgrel 重置为 1"
+          fi
+          echo "value=$PKGREL" >> "$GITHUB_OUTPUT"
+
       - name: 更新 AUR PKGBUILD 和 .SRCINFO
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           SHA256="${{ steps.sha256.outputs.value }}"
+          PKGREL="${{ steps.pkgrel.outputs.value }}"
 
           sed -i "s/^pkgver=.*/pkgver=${VERSION}/" fluxdown/aur/PKGBUILD
-          sed -i "s/^pkgrel=.*/pkgrel=1/" fluxdown/aur/PKGBUILD
+          sed -i "s/^pkgrel=.*/pkgrel=${PKGREL}/" fluxdown/aur/PKGBUILD
           sed -i "s/^sha256sums_x86_64=.*/sha256sums_x86_64=('${SHA256}')/" fluxdown/aur/PKGBUILD
 
           echo "更新后的 PKGBUILD："
@@ -103,5 +124,5 @@ jobs:
           commit_username: github-actions[bot]
           commit_email: github-actions[bot]@users.noreply.github.com
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-          commit_message: "Update zerx-lab-fluxdown-bin to ${{ steps.version.outputs.version }}"
+          commit_message: "Update zerx-lab-fluxdown-bin to ${{ steps.version.outputs.version }}-${{ steps.pkgrel.outputs.value }}"
           force_push: "true"
