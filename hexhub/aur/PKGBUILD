@@ -28,7 +28,7 @@ depends=(
     'xdg-utils'
 )
 optdepends=(
-    'libappindicator-gtk3: 系统托盘图标支持'
+    'libappindicator: 系统托盘图标支持'
     'libayatana-appindicator: 系统托盘图标支持（Ayatana）'
 )
 provides=('hexhub')

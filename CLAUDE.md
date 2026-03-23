@@ -112,3 +112,37 @@ jobs:
 - Secrets 和环境变量在仓库的 Settings > Secrets and variables > Actions 中配置
 - 需要写权限的工作流（如推送提交、创建 PR）须在 `permissions` 字段显式声明
 - 使用固定版本的 Actions（如 `@v4`）而非 `@main`，保证稳定性
+
+## AUR 打包规范
+
+### 推荐使用 devtools 干净环境打包
+
+AUR 打包**强烈推荐**使用 `devtools` 提供的干净 chroot 环境进行构建，而非直接在本地环境执行 `makepkg`。
+
+原因：
+- 干净的 chroot 环境能确保构建过程不依赖本地已安装但未在 `depends`/`makedepends` 中声明的包
+- 可以有效排查依赖缺失问题，避免"在我机器上能构建"但其他用户构建失败的情况
+- 与 AUR 用户实际使用的 `yay`/`paru` 等工具的干净构建模式行为一致
+
+### 常用命令
+
+```bash
+# 安装 devtools
+sudo pacman -S devtools
+
+# 使用 extra 仓库的干净 chroot 环境构建（推荐）
+extra-x86_64-build
+
+# 如果需要自定义 chroot 路径
+extra-x86_64-build -r /var/lib/archbuild
+
+# 本地快速测试（不推荐用于最终验证）
+makepkg -si
+```
+
+### 打包流程建议
+
+1. 编写/修改 `PKGBUILD` 后，先用 `namcap PKGBUILD` 检查常见问题
+2. 使用 `extra-x86_64-build` 在干净环境中构建，确认依赖声明完整
+3. 构建成功后，用 `namcap *.pkg.tar.zst` 检查生成的包
+4. 确认无误后再推送到 AUR
