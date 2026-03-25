@@ -158,12 +158,13 @@ EOF
     install -Dm644 "$_icon_512" "$pkgdir/usr/share/pixmaps/pencil.png"
 
     # .desktop 文件
-    # 注意: Electron 在 Wayland 下使用 package.json 的 "name" 字段作为 app_id
-    # pencil 的 package.json 中 name="pencil"（全小写），
-    # 因此 StartupWMClass 设为 "pencil" 以匹配 Wayland app_id。
-    # .desktop 文件名也为 pencil.desktop，KDE Plasma 会通过文件名匹配。
+    # KDE Plasma Wayland 通过 desktopFileName 匹配 .desktop 文件名来查找图标。
+    # Electron 使用 package.json 的 productName（"Pencil"，大写 P）作为：
+    #   - desktopFileName → KDE 用此匹配 .desktop 文件名（区分大小写）
+    #   - resourceClass   → 即 WM_CLASS / app_id
+    # 因此 .desktop 文件名必须为 Pencil.desktop，StartupWMClass 必须为 Pencil。
     install -Dm644 /dev/stdin \
-        "$pkgdir/usr/share/applications/pencil.desktop" << 'EOF'
+        "$pkgdir/usr/share/applications/Pencil.desktop" << 'EOF'
 [Desktop Entry]
 Name=Pencil
 Comment=Full canvas design tool with native performance
@@ -173,7 +174,7 @@ Terminal=false
 Type=Application
 Categories=Graphics;Design;
 MimeType=x-scheme-handler/pencil;
-StartupWMClass=pencil
+StartupWMClass=Pencil
 StartupNotify=true
 EOF
 }
