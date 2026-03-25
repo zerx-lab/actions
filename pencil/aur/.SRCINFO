@@ -1,7 +1,7 @@
 pkgbase = zerx-lab-pencil-bin
 	pkgdesc = Pencil - Full canvas design tool with native performance
 	pkgver = 1.1.31
-	pkgrel = 1
+	pkgrel = 2
 	url = https://www.pencil.dev
 	arch = x86_64
 	license = LicenseRef-proprietary
@@ -10,6 +10,7 @@ pkgbase = zerx-lab-pencil-bin
 	depends = cairo
 	depends = dbus
 	depends = expat
+	depends = hicolor-icon-theme
 	depends = libcups
 	depends = libdrm
 	depends = libsecret
