@@ -58,8 +58,22 @@ jobs:
         id: sha256
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          DOWNLOAD_URL="https://fluxdown.zerx.dev/api/download/FluxDown-${VERSION}-linux-x64.tar.gz"
 
+          # 从发布 API 获取权威下载地址，避免自拼文件名导致 404
+          RELEASE=$(curl -sf "https://fluxdown.zerx.dev/api/release")
+          DL_PATH=$(echo "$RELEASE" | jq -r '.assets.linux_tarball.download_url // empty')
+          API_VERSION=$(echo "$RELEASE" | jq -r '.version // empty')
+
+          if [ -z "$DL_PATH" ]; then
+            echo "::error::无法从 API 获取 linux_tarball 下载地址，响应：$RELEASE"
+            exit 1
+          fi
+          if [ "$API_VERSION" != "$VERSION" ]; then
+            echo "::error::目标版本($VERSION)与 API 最新版本($API_VERSION)不一致，可能资产尚未发布"
+            exit 1
+          fi
+
+          DOWNLOAD_URL="https://fluxdown.zerx.dev${DL_PATH}"
           echo "正在下载: $DOWNLOAD_URL"
           curl -fL "$DOWNLOAD_URL" -o "FluxDown-${VERSION}-linux-x64.tar.gz"
 
