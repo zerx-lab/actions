@@ -74,6 +74,41 @@ jobs:
           upstream_version: ${{ steps.upstream.outputs.version }}
           aur_pkg_name: zerx-lab-fluxdown-bin
 
+  check-fluxdown-cli:
+    name: 检查 FluxDown CLI 版本
+    runs-on: ubuntu-latest
+    outputs:
+      needs_update: ${{ steps.check-version.outputs.needs_update }}
+      version: ${{ steps.upstream.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 获取上游最新稳定版本
+        id: upstream
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # CLI 发布在 zerx-lab/FluxDown 的 cli-v* tag 上；跳过预发布（rc）
+          VERSION=$(gh api "repos/zerx-lab/FluxDown/releases?per_page=100" \
+            | jq -r '[.[] | select(.prerelease == false and (.tag_name | startswith("cli-v")))][0].tag_name // empty' \
+            | sed 's/^cli-v//')
+
+          if [ -z "$VERSION" ]; then
+            echo "::error::无法从 GitHub Releases 获取最新稳定 CLI 版本"
+            exit 1
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "上游最新版本: $VERSION"
+
+      - name: 检查是否需要更新
+        id: check-version
+        uses: ./.github/actions/check-aur-version
+        with:
+          upstream_version: ${{ steps.upstream.outputs.version }}
+          aur_pkg_name: fluxdown-cli-bin
+
   check-hexhub:
     name: 检查 HexHub 版本
     runs-on: ubuntu-latest
@@ -126,6 +161,16 @@ jobs:
     uses: ./.github/workflows/fluxdown-aur-update.yml
     with:
       version: ${{ needs.check-fluxdown.outputs.version }}
+    secrets:
+      AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+
+  update-fluxdown-cli:
+    name: 更新 FluxDown CLI
+    needs: check-fluxdown-cli
+    if: needs.check-fluxdown-cli.outputs.needs_update == 'true'
+    uses: ./.github/workflows/fluxdown-cli-aur-update.yml
+    with:
+      version: ${{ needs.check-fluxdown-cli.outputs.version }}
     secrets:
       AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
 
