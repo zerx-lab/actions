@@ -208,16 +208,11 @@ jobs:
       - name: 获取上游最新版本
         id: upstream
         run: |
-          SIGNED_URL=$(curl -sI "https://www.pencil.dev/download/Pencil-linux-x64.tar.gz" \
-            | grep -i '^location:' | tr -d '\r' | cut -d' ' -f2)
-
-          if [ -z "$SIGNED_URL" ]; then
-            echo "::error::无法获取下载重定向地址"
-            exit 1
-          fi
-
-          VERSION=$(curl -s -r 0-102400 "$SIGNED_URL" \
-            | tar -tzf - 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          # pencil.dev 已迁移至 pen.dev（多跳重定向：pen.dev -> GCS 签名地址），
+          # 用 curl -L 跟随全链，直接 range 读 tarball 头部提取版本号。
+          # || true：避免 set -e 在管道无匹配时静默退出，保证错误提示可见。
+          VERSION=$(curl -sL -r 0-102400 "https://www.pen.dev/download/Pencil-linux-x64.tar.gz" \
+            | tar -tzf - 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || true)
 
           if [ -z "$VERSION" ]; then
             echo "::error::无法从 tarball 目录名提取版本号"
