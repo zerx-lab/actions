@@ -25,7 +25,7 @@
 
 ## 构包校验
 
-发布前运行 `scripts/check-package.sh`：Linux Docker 中安装 devtools / namcap，使用 `extra-x86_64-build` 干净 chroot 构包，再用 `makepkg --printsrcinfo` 生成元数据。构包失败不会推送 AUR。CLI 两架构下载均校验 SHA256，chroot 实际构建 x86_64 包。
+发布前运行 `scripts/check-package.sh`：以 systemd 为 PID 1 启动特权 Linux Docker 容器，挂载 cgroup 并为 `/run` 提供 tmpfs，满足 devtools 的 system bus / scope 要求；安装 devtools / namcap，使用 `extra-x86_64-build` 干净 chroot 构包，再用 `makepkg --printsrcinfo` 生成元数据。构包失败不会推送 AUR，退出时销毁专用容器。CLI 两架构下载均校验 SHA256，chroot 实际构建 x86_64 包。
 
 本地回归与手动构包（后两条需要 Linux Docker，允许 privileged chroot）：
 

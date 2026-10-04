@@ -4,13 +4,20 @@ set -euo pipefail
 package_dir=$(cd "${1:?package directory required}" && pwd)
 source_dir=$(cd "${2:?download directory required}" && pwd)
 
-docker run --rm --privileged --tmpfs /run \
+# devtools 创建 systemd scope；容器必须以 systemd 为 PID 1，不能仅运行 bash。
+container=$(docker run --detach --privileged --cgroupns=host \
+  --tmpfs /run --tmpfs /run/lock \
+  -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
   -v "$package_dir:/pkg" \
   -v "$source_dir:/sources:ro" \
-  -w /pkg archlinux:base-devel bash -euc '
+  -e container=docker --stop-signal SIGRTMIN+3 \
+  -w /pkg archlinux:base-devel /usr/lib/systemd/systemd)
+trap 'docker rm --force "$container" >/dev/null' EXIT
+
+docker exec "$container" bash -euc '
+    timeout 30 bash -c "until test -S /run/systemd/private; do sleep 0.2; done"
+    systemctl start dbus
     pacman -Syu --noconfirm --needed devtools namcap
-    # nspawn 需要宿主 machine ID；Docker 基础镜像没有初始化它。
-    systemd-machine-id-setup
     useradd -m -U builder
     echo "builder ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builder
     chmod 440 /etc/sudoers.d/builder
