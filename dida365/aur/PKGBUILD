@@ -38,7 +38,7 @@ provides=('dida' 'dida365')
 conflicts=('dida' 'dida365')
 options=('!strip')
 
-source_x86_64=("dida-${pkgver}-amd64.deb::https://dida365.com/static/getApp/download?type=linux_deb_x64")
+source_x86_64=("dida-${pkgver}-amd64.deb::https://cdn.dida365.cn/download/linux/linux_deb_x64/dida-${pkgver}-amd64.deb")
 sha256sums_x86_64=('58614aeea4b48e714739a39e5c415af24ba231bd6020b94eb9f4dcca2e414a1f')
 
 package() {

@@ -28,26 +28,18 @@ jobs:
       - name: 获取上游最新版本（仅 workflow_dispatch 且未指定版本时）
         id: upstream
         if: inputs.version == ''
-        run: |
-          LOCATION=$(curl -sI "https://dida365.com/static/getApp/download?type=linux_deb_x64" \
-            | grep -i "^location:" | tr -d '\r' | awk '{print $2}')
-          echo "redirect: $LOCATION"
-
-          VERSION=$(echo "$LOCATION" | grep -oP '(?<=dida-)\d+\.\d+\.\d+(?=-amd64\.deb)')
-          if [ -z "$VERSION" ]; then
-            echo "::error::无法提取版本号，Location: $LOCATION"
-            exit 1
-          fi
-
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "上游最新版本: $VERSION"
+        run: bash dida365/scripts/upstream.sh >> "$GITHUB_OUTPUT"
 
       - name: 确定目标版本
         id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          UPSTREAM_VERSION: ${{ steps.upstream.outputs.version }}
         run: |
-          VERSION="${{ inputs.version }}"
-          if [ -z "$VERSION" ]; then
-            VERSION="${{ steps.upstream.outputs.version }}"
+          VERSION="${INPUT_VERSION:-$UPSTREAM_VERSION}"
+          if [[ ! "$VERSION" =~ ^[0-9]+(\.[0-9]+){2,3}$ ]]; then
+            echo "::error::无效的滴答清单版本号：$VERSION"
+            exit 1
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "目标版本: $VERSION"
@@ -56,8 +48,13 @@ jobs:
         id: sha256
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          curl -fL "https://dida365.com/static/getApp/download?type=linux_deb_x64" \
+          curl -fL "https://cdn.dida365.cn/download/linux/linux_deb_x64/dida-${VERSION}-amd64.deb" \
             -o "dida-${VERSION}-amd64.deb"
+          PACKAGE_VERSION=$(dpkg-deb --field "dida-${VERSION}-amd64.deb" Version)
+          if [ "$PACKAGE_VERSION" != "$VERSION" ]; then
+            echo "::error::DEB 内部版本($PACKAGE_VERSION)与目标版本($VERSION)不一致"
+            exit 1
+          fi
           SHA256=$(sha256sum "dida-${VERSION}-amd64.deb" | awk '{print $1}')
           echo "SHA256: $SHA256"
           echo "value=$SHA256" >> "$GITHUB_OUTPUT"

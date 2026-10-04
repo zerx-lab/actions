@@ -18,19 +18,7 @@ jobs:
 
       - name: 获取上游最新版本
         id: upstream
-        run: |
-          LOCATION=$(curl -sI "https://dida365.com/static/getApp/download?type=linux_deb_x64" \
-            | grep -i "^location:" | tr -d '\r' | awk '{print $2}')
-          echo "redirect: $LOCATION"
-
-          VERSION=$(echo "$LOCATION" | grep -oP '(?<=dida-)\d+\.\d+\.\d+(?=-amd64\.deb)')
-          if [ -z "$VERSION" ]; then
-            echo "::error::无法提取版本号，Location: $LOCATION"
-            exit 1
-          fi
-
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "上游最新版本: $VERSION"
+        run: bash dida365/scripts/upstream.sh >> "$GITHUB_OUTPUT"
 
       - name: 检查是否需要更新
         id: check-version
