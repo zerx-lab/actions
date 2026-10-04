@@ -24,7 +24,8 @@ docker exec "$container" bash -euc '
     cp /sources/*.tar.gz /pkg/
     chown -R builder:builder /pkg
     su builder -c "namcap PKGBUILD"
-    su builder -c "extra-x86_64-build -r /tmp/archbuild"
+    # 使用默认 /var/lib/archbuild；systemd 的 /tmp 带 nosuid，会破坏 chroot 内 sudo。
+    su builder -c "extra-x86_64-build"
     namcap ./*.pkg.tar.zst
     su builder -c "makepkg --printsrcinfo > .SRCINFO"
   '
