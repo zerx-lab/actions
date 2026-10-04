@@ -1,20 +1,41 @@
 # FluxDown AUR 自动化
 
-维护 FluxDown 相关 AUR 包，每日定时（`check-updates.yml`，UTC 00:00）对比上游版本与 AUR 版本，有更新时自动改写 PKGBUILD、重新生成 .SRCINFO 并推送到 AUR。
+维护 FluxDown 相关 AUR 包，每日定时（`check-updates.yml`，UTC 00:00）对比上游版本与 AUR 版本。更新流程先校验发布资产，再改写 PKGBUILD，在 devtools 干净 chroot 中实际构包，成功后生成 .SRCINFO 并推送到 AUR。
 
 ## 包列表
 
 | AUR 包 | 目录 | 上游版本来源 | 工作流 |
 |--------|------|--------------|--------|
-| [`zerx-lab-fluxdown-bin`](https://aur.archlinux.org/packages/zerx-lab-fluxdown-bin) | [`aur/`](aur/) | `https://fluxdown.zerx.dev/api/release`（桌面 GUI，linux-x64 tarball） | [fluxdown-aur-update.yml](../.github/workflows/fluxdown-aur-update.yml) |
-| [`fluxdown-cli-bin`](https://aur.archlinux.org/packages/fluxdown-cli-bin) | [`aur-cli/`](aur-cli/) | GitHub Releases `cli-v*` 稳定 tag（musl 静态二进制，x86_64 + aarch64） | [fluxdown-cli-aur-update.yml](../.github/workflows/fluxdown-cli-aur-update.yml) |
+| [`zerx-lab-fluxdown-bin`](https://aur.archlinux.org/packages/zerx-lab-fluxdown-bin) | [`aur/`](aur/) | GitHub Releases `v*` 稳定 tag，含完整桌面 x86_64 资产 | [fluxdown-aur-update.yml](../.github/workflows/fluxdown-aur-update.yml) |
+| [`fluxdown-cli-bin`](https://aur.archlinux.org/packages/fluxdown-cli-bin) | [`aur-cli/`](aur-cli/) | GitHub Releases `v*` 稳定 tag，含完整 CLI x86_64 + aarch64 资产 | [fluxdown-cli-aur-update.yml](../.github/workflows/fluxdown-cli-aur-update.yml) |
 
-## fluxdown-cli-bin 说明
+## 发布契约
 
-- 上游产物来自 FluxDown 仓库 `release.yml` 的 `build-cli-binaries` job：`FluxDown-CLI-<版本>-linux-{x64,arm64}.tar.gz`，musl 静态链接、零运行时依赖，解压即单个 `fluxdown` 二进制。
-- 预发布（`cli-vX.Y.Z-rc.N`，GitHub prerelease）不会推送到 AUR，工作流只取最新稳定 tag。
-- SHA256 在工作流内实际下载 tarball 计算，并与 Release 附带的 `SHA256SUMS.txt` 交叉校验，不一致即失败。
-- 与桌面包 `zerx-lab-fluxdown-bin` 可共存：桌面包安装 `/usr/bin/flux_down`，CLI 包安装 `/usr/bin/fluxdown`，无文件冲突。
+- 检测与更新共用 `scripts/release.py`，从 `zerx-lab/FluxDown` 的统一 `vX.Y.Z` release 取版本，不再使用官网 latest API 或旧 `cli-v*` tag。
+- 自动检测分页查询，排除 draft / prerelease，并按数字版本选择**该组件资产齐全**的最新稳定版。组件未随最新 release 发布时，继续使用此前完整版本；手动指定版本则严格查询对应 tag，资产缺失即失败，不回退到其他版本。
+- 桌面资产：`FluxDown-<版本>-linux-x64.tar.gz` + `SHA256SUMS-app.txt`。CLI 资产：`FluxDown-CLI-<版本>-linux-{x64,arm64}.tar.gz` + `SHA256SUMS-cli.txt`。实际下载计算 SHA256，与对应组件清单逐项校验。
+- 当前 PKGBUILD 面向 GPUI / 统一发布格式，不支持旧 Flutter tarball。
+
+## 安装布局
+
+- 桌面版将 `fluxdown-desktop`、`fluxdown-agent`、`fluxdownd`、`fluxdown_nmh` 放在 `/opt/fluxdown` 同一目录，满足兄弟进程查找要求；安装发布包根目录的 desktop 和 PNG，不再依赖 Flutter `lib/`、`data/`。
+- GPUI 依赖对齐上游 Arch 包（含 X11 / Wayland / Vulkan 等）。桌面入口为 `/usr/bin/fluxdown-desktop`，agent 入口为 `/usr/bin/fluxdown-agent`；保留原 `flux_down` 入口，旧 `--silentStart` 自启请求转交 agent 的 `--autostart`，与上游升级行为一致。
+- 继续安装 Chromium / Chrome 和 Firefox Native Messaging Host 清单，指向 `/opt/fluxdown/fluxdown_nmh`。
+- CLI 是 musl 静态二进制，安装 `/usr/bin/fluxdown`；与桌面包无文件冲突。
+
+## 构包校验
+
+发布前运行 `scripts/check-package.sh`：Linux Docker 中安装 devtools / namcap，使用 `extra-x86_64-build` 干净 chroot 构包，再用 `makepkg --printsrcinfo` 生成元数据。构包失败不会推送 AUR。CLI 两架构下载均校验 SHA256，chroot 实际构建 x86_64 包。
+
+本地回归与手动构包（后两条需要 Linux Docker，允许 privileged chroot）：
+
+```bash
+python3 -B -m unittest discover -s fluxdown/scripts -p 'test_*.py' -v
+python3 fluxdown/scripts/release.py app 0.5.3 --download-dir /tmp/fluxdown-assets
+bash fluxdown/scripts/check-package.sh fluxdown/aur /tmp/fluxdown-assets
+```
+
+手动构包时，PKGBUILD 的版本和校验和须与下载资产一致；GitHub 工作流会自动更新这些字段。
 
 ## 所需 Secrets
 
@@ -25,10 +46,10 @@
 ## 手动触发
 
 ```bash
-# 桌面包（留空 version 则取上游 API 最新版）
+# 桌面包（留空 version 则取资产齐全的最新稳定版）
 gh workflow run fluxdown-aur-update.yml
 
-# CLI 包（留空 version 则取 GitHub Releases 最新稳定 cli-v* tag）
+# CLI 包（同样从统一 v* release 选择 CLI 资产）
 gh workflow run fluxdown-cli-aur-update.yml
-gh workflow run fluxdown-cli-aur-update.yml --field version=0.2.3
+gh workflow run fluxdown-cli-aur-update.yml --field version=0.5.3
 ```

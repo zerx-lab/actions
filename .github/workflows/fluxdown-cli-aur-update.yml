@@ -25,70 +25,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: 获取上游最新稳定版本（仅 workflow_dispatch 且未指定版本时）
-        id: upstream
-        if: inputs.version == ''
+      - name: 选择稳定发布并校验下载资产
+        id: version
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_VERSION: ${{ inputs.version }}
         run: |
-          # CLI 发布在 zerx-lab/FluxDown 的 cli-v* tag 上；跳过预发布（rc）
-          VERSION=$(gh api "repos/zerx-lab/FluxDown/releases?per_page=100" \
-            | jq -r '[.[] | select(.prerelease == false and (.tag_name | startswith("cli-v")))][0].tag_name // empty' \
-            | sed 's/^cli-v//')
-
-          if [ -z "$VERSION" ]; then
-            echo "::error::无法从 GitHub Releases 获取最新稳定 CLI 版本"
-            exit 1
-          fi
-
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "上游最新版本: $VERSION"
-
-      - name: 确定目标版本
-        id: version
-        run: |
-          VERSION="${{ inputs.version }}"
-          if [ -z "$VERSION" ]; then
-            VERSION="${{ steps.upstream.outputs.version }}"
-          fi
-          case "$VERSION" in
-            *-*)
-              echo "::error::AUR 不发布预发布版本（$VERSION）"
-              exit 1
-              ;;
-          esac
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "目标版本: $VERSION"
-
-      - name: 下载 tarball 并计算 SHA256（与 Release SHA256SUMS.txt 交叉校验）
-        id: sha256
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          BASE="https://github.com/zerx-lab/FluxDown/releases/download/cli-v${VERSION}"
-
-          curl -fL "${BASE}/FluxDown-CLI-${VERSION}-linux-x64.tar.gz" \
-            -o "FluxDown-CLI-${VERSION}-linux-x64.tar.gz"
-          curl -fL "${BASE}/FluxDown-CLI-${VERSION}-linux-arm64.tar.gz" \
-            -o "FluxDown-CLI-${VERSION}-linux-arm64.tar.gz"
-          curl -fL "${BASE}/SHA256SUMS.txt" -o SHA256SUMS.txt
-
-          SHA_X64=$(sha256sum "FluxDown-CLI-${VERSION}-linux-x64.tar.gz" | awk '{print $1}')
-          SHA_ARM64=$(sha256sum "FluxDown-CLI-${VERSION}-linux-arm64.tar.gz" | awk '{print $1}')
-
-          # 与发布清单交叉校验，防止资产损坏或被替换
-          grep -q "^${SHA_X64}  FluxDown-CLI-${VERSION}-linux-x64.tar.gz$" SHA256SUMS.txt || {
-            echo "::error::linux-x64 tarball 与 SHA256SUMS.txt 不一致"
-            exit 1
-          }
-          grep -q "^${SHA_ARM64}  FluxDown-CLI-${VERSION}-linux-arm64.tar.gz$" SHA256SUMS.txt || {
-            echo "::error::linux-arm64 tarball 与 SHA256SUMS.txt 不一致"
-            exit 1
-          }
-
-          echo "x64: $SHA_X64"
-          echo "arm64: $SHA_ARM64"
-          echo "x64=$SHA_X64" >> "$GITHUB_OUTPUT"
-          echo "arm64=$SHA_ARM64" >> "$GITHUB_OUTPUT"
+          python3 fluxdown/scripts/release.py cli "$TARGET_VERSION" \
+            --download-dir "$RUNNER_TEMP/fluxdown-assets" >> "$GITHUB_OUTPUT"
 
       - name: 确定 pkgrel
         id: pkgrel
@@ -113,8 +57,8 @@ jobs:
       - name: 更新 AUR PKGBUILD 和 .SRCINFO
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          SHA_X64="${{ steps.sha256.outputs.x64 }}"
-          SHA_ARM64="${{ steps.sha256.outputs.arm64 }}"
+          SHA_X64="${{ steps.version.outputs.x64 }}"
+          SHA_ARM64="${{ steps.version.outputs.arm64 }}"
           PKGREL="${{ steps.pkgrel.outputs.value }}"
 
           sed -i "s/^pkgver=.*/pkgver=${VERSION}/" fluxdown/aur-cli/PKGBUILD
@@ -125,18 +69,7 @@ jobs:
           echo "更新后的 PKGBUILD："
           cat fluxdown/aur-cli/PKGBUILD
 
-          # 生成 .SRCINFO
-          docker run --rm \
-            -v "$PWD/fluxdown/aur-cli:/pkg" \
-            -w /pkg \
-            archlinux:base-devel \
-            bash -c "
-              pacman -Sy --noconfirm --needed sudo &&
-              useradd -m builder &&
-              echo 'builder ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers &&
-              chown -R builder /pkg &&
-              su builder -c 'makepkg --printsrcinfo > .SRCINFO'
-            "
+          bash fluxdown/scripts/check-package.sh fluxdown/aur-cli "$RUNNER_TEMP/fluxdown-assets"
 
           echo "生成的 .SRCINFO："
           cat fluxdown/aur-cli/.SRCINFO
@@ -150,4 +83,4 @@ jobs:
           commit_email: github-actions[bot]@users.noreply.github.com
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
           commit_message: "Update fluxdown-cli-bin to ${{ steps.version.outputs.version }}-${{ steps.pkgrel.outputs.value }}"
-          force_push: "true"
+          force_push: "false"

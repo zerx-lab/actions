@@ -1,6 +1,6 @@
 pkgbase = fluxdown-cli-bin
 	pkgdesc = FluxDown CLI - 命令行客户端，管理 FluxDown App / Server 的下载任务（musl 静态链接）
-	pkgver = 0.2.3
+	pkgver = 0.5.3
 	pkgrel = 1
 	url = https://fluxdown.zerx.dev
 	arch = x86_64
@@ -9,9 +9,9 @@ pkgbase = fluxdown-cli-bin
 	provides = fluxdown-cli
 	conflicts = fluxdown-cli
 	options = !strip
-	source_x86_64 = FluxDown-CLI-0.2.3-linux-x64.tar.gz::https://github.com/zerx-lab/FluxDown/releases/download/cli-v0.2.3/FluxDown-CLI-0.2.3-linux-x64.tar.gz
-	sha256sums_x86_64 = 5a5c2030a143332664992844ed392953f62f77203f58254dfb3c40826b5072e4
-	source_aarch64 = FluxDown-CLI-0.2.3-linux-arm64.tar.gz::https://github.com/zerx-lab/FluxDown/releases/download/cli-v0.2.3/FluxDown-CLI-0.2.3-linux-arm64.tar.gz
-	sha256sums_aarch64 = 9794b6cf7839a28a3d0446c5360d5174518430ee4d70e0d4e6a73d1d6a26e642
+	source_x86_64 = FluxDown-CLI-0.5.3-linux-x64.tar.gz::https://github.com/zerx-lab/FluxDown/releases/download/v0.5.3/FluxDown-CLI-0.5.3-linux-x64.tar.gz
+	sha256sums_x86_64 = 192b8026b2ce46d1a1890a5807c429ccda0d7c674f245a014aada1f36946f6b7
+	source_aarch64 = FluxDown-CLI-0.5.3-linux-arm64.tar.gz::https://github.com/zerx-lab/FluxDown/releases/download/v0.5.3/FluxDown-CLI-0.5.3-linux-arm64.tar.gz
+	sha256sums_aarch64 = c4cba6d6d455dea9f169ddb13bb5bf26659586009ae29572301919603c9bbf95
 
 pkgname = fluxdown-cli-bin

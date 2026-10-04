@@ -49,23 +49,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: 获取上游最新版本
+      - name: 获取资产齐全的最新稳定桌面版
         id: upstream
-        run: |
-          RESPONSE=$(curl -sf "https://fluxdown.zerx.dev/api/release")
-          if [ $? -ne 0 ]; then
-            echo "::error::无法访问 FluxDown API"
-            exit 1
-          fi
-
-          VERSION=$(echo "$RESPONSE" | jq -r '.version')
-          if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
-            echo "::error::无法从 API 提取版本号，响应：$RESPONSE"
-            exit 1
-          fi
-
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "上游最新版本: $VERSION"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 fluxdown/scripts/release.py app >> "$GITHUB_OUTPUT"
 
       - name: 检查是否需要更新
         id: check-version
@@ -84,23 +72,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: 获取上游最新稳定版本
+      - name: 获取资产齐全的最新稳定 CLI 版
         id: upstream
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # CLI 发布在 zerx-lab/FluxDown 的 cli-v* tag 上；跳过预发布（rc）
-          VERSION=$(gh api "repos/zerx-lab/FluxDown/releases?per_page=100" \
-            | jq -r '[.[] | select(.prerelease == false and (.tag_name | startswith("cli-v")))][0].tag_name // empty' \
-            | sed 's/^cli-v//')
-
-          if [ -z "$VERSION" ]; then
-            echo "::error::无法从 GitHub Releases 获取最新稳定 CLI 版本"
-            exit 1
-          fi
-
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "上游最新版本: $VERSION"
+        run: python3 fluxdown/scripts/release.py cli >> "$GITHUB_OUTPUT"
 
       - name: 检查是否需要更新
         id: check-version
