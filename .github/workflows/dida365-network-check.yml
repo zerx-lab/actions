@@ -1,0 +1,32 @@
+name: Dida365 network diagnosis
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check version without following CDN redirect
+        run: bash dida365/scripts/upstream.sh
+      - name: Inspect official CDN connectivity
+        shell: bash
+        run: |
+          getent ahosts cdn.dida365.cn
+          dig +short cdn.dida365.cn A
+          dig +short cdn.dida365.cn AAAA
+          url='https://cdn.dida365.cn/download/linux/linux_deb_x64/dida-8.0.20-amd64.deb'
+          probe() {
+            echo "::group::$*"
+            if curl --verbose --head --fail --connect-timeout 8 --max-time 20 "$@" "$url"; then
+              echo 'Probe succeeded'
+            else
+              echo "Probe failed: $?"
+            fi
+            echo '::endgroup::'
+          }
+          probe
+          probe --ipv4
+          probe --doh-url https://dns.google/dns-query
+          probe --doh-url https://cloudflare-dns.com/dns-query

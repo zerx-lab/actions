@@ -3,9 +3,10 @@
 set -euo pipefail
 
 endpoint='https://dida365.com/static/getApp/download?type=linux_deb_x64'
-if ! location=$(curl --fail --silent --show-error --head --location \
-  --user-agent 'Mozilla/5.0' --output /dev/null --write-out '%{url_effective}' \
-  "$endpoint"); then
+# 只读取官网的 Location，不连接下载 CDN；版本检查不依赖 CDN 可达性。
+if ! location=$(curl --fail --silent --show-error --head \
+  --connect-timeout 10 --max-time 30 --user-agent 'Mozilla/5.0' \
+  --output /dev/null --write-out '%{redirect_url}' "$endpoint"); then
   echo "::error::无法解析滴答清单官网下载地址：$endpoint" >&2
   exit 1
 fi
